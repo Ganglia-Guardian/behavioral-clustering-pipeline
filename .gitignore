@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# R
+.Rhistory
+.RData
+
+# Generated outputs (personal runs — keep committed test data)
+test_outputs/my_*.csv
+test_outputs/benchmark_*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/

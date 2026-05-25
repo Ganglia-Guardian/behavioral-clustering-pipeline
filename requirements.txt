@@ -1,0 +1,8 @@
+numpy
+scipy
+pandas
+scikit-learn
+hdbscan
+umap-learn
+faiss-cpu
+h5py
