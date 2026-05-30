@@ -35,7 +35,7 @@ from clustering_pipeline import (
     _build_cdf_features, _silhouette,
     WIN_SIZE,
 )
-from prepare_test_data import convert as prepare_csv
+from prepare_test_data import convert as prepare_csv, _LOSS_CUTOFF
 
 
 # ── Dataset definitions ───────────────────────────────────────────────────────
@@ -161,14 +161,15 @@ def run_one(cfg: dict, out_dir: Path) -> dict:
     t_total = time.perf_counter()
 
     # ── Step 0: Prepare data ──────────────────────────────────────────────────
-    print(f"  [0/5] Preparing data ...")
+    print(f"  [0/5] Preparing data (detecting packet loss, cleaning windows) ...")
     t0 = time.perf_counter()
     import io, contextlib
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        convert_fn = prepare_csv
-        convert_fn(str(cfg["raw_csv"]), str(clean_csv), cfg["label"])
-    metrics["t_prepare_s"] = round(time.perf_counter() - t0, 2)
+    prep_stats = prepare_csv(str(cfg["raw_csv"]), str(clean_csv), cfg["label"])
+    metrics["t_prepare_s"]      = round(time.perf_counter() - t0, 2)
+    metrics["n_missing_packets"] = prep_stats.get("n_inserted", 0)
+    metrics["loss_pct"]          = prep_stats.get("loss_pct", 0.0)
+    metrics["n_discarded_wins"]  = prep_stats.get("n_discarded_wins", 0)
 
     # ── Step 1: Load ──────────────────────────────────────────────────────────
     print(f"  [1/5] Loading ...")
@@ -248,6 +249,11 @@ def print_dataset_report(m: dict) -> None:
     print(f"  Algorithm        : {m['algorithm']}"
           + (f"  (min_cluster_size not tracked for AP)" if m['algorithm']=='AP' else ""))
     print(f"  Duration         : {m.get('duration_min', '?')} min")
+    print(f"  ── Data Quality ──")
+    print(f"  Missing packets  : {m.get('n_missing_packets', 0):,}  "
+          f"({m.get('loss_pct', 0.0):.2f}% packet loss)")
+    print(f"  Discarded windows: {m.get('n_discarded_wins', 0):,}  "
+          f"(>{_LOSS_CUTOFF}% NaN)")
     print(f"  Windows          : {m.get('n_windows', 0):,}")
     print(f"  Clusters found   : {m.get('n_clusters', 0)}")
     print(f"  Noise points     : {m.get('n_noise', 0):,}  "
@@ -276,8 +282,8 @@ def write_summary(all_metrics: list, out_path: Path) -> None:
 
     # Summary table
     cols = ["Dataset", "Windows", "Algo", "Clusters", "Noise%",
-            "Silhouette", "Quality", "Total(s)"]
-    col_w = [28, 9, 8, 9, 7, 11, 11, 9]
+            "Loss%", "Silhouette", "Quality", "Total(s)"]
+    col_w = [28, 9, 8, 9, 7, 7, 11, 11, 9]
 
     lines.append("")
     lines.append("  " + "".join(c.ljust(w) for c, w in zip(cols, col_w)))
@@ -285,7 +291,7 @@ def write_summary(all_metrics: list, out_path: Path) -> None:
 
     for m in all_metrics:
         if m["status"] != "ok":
-            row = [m["name"], "—", "—", "—", "—", "—", "ERROR", "—"]
+            row = [m["name"], "—", "—", "—", "—", "—", "—", "ERROR", "—"]
         else:
             sil = m.get("silhouette", float("nan"))
             sil_str = f"{sil:.4f}" if not np.isnan(sil) else "N/A"
@@ -293,12 +299,14 @@ def write_summary(all_metrics: list, out_path: Path) -> None:
                        "reasonable" if sil > 0.25 else
                        "poor") if not np.isnan(sil) else "N/A"
             noise_pct = f"{100*m.get('n_noise',0)/max(m.get('n_windows',1),1):.1f}%"
+            loss_pct  = f"{m.get('loss_pct', 0.0):.2f}%"
             row = [
                 m["name"][:27],
                 f"{m.get('n_windows',0):,}",
                 m["algorithm"],
                 str(m.get("n_clusters", 0)),
                 noise_pct,
+                loss_pct,
                 sil_str,
                 quality,
                 f"{m.get('t_total_s',0):.1f}",
@@ -349,6 +357,8 @@ def write_summary(all_metrics: list, out_path: Path) -> None:
             f"  Note             : {m['note']}",
             f"  Algorithm        : {m['algorithm']}",
             f"  Duration         : {m.get('duration_min','?')} min",
+            f"  Missing packets  : {m.get('n_missing_packets',0):,}  ({m.get('loss_pct',0.0):.2f}% packet loss)",
+            f"  Discarded windows: {m.get('n_discarded_wins',0):,}",
             f"  Windows          : {m.get('n_windows',0):,}",
             f"  Clusters found   : {m.get('n_clusters',0)}",
             f"  Noise points     : {m.get('n_noise',0):,}  "
