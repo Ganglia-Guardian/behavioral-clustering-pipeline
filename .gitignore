@@ -20,6 +20,10 @@ env/
 test_outputs/my_*.csv
 test_outputs/benchmark_*.csv
 
+# Results: keep Cluster_detail_results.csv and summary files,
+# exclude large intermediate preprocessed CSVs (can be regenerated)
+results/**/combined_harp_data_cleaned.csv
+
 # Jupyter
 .ipynb_checkpoints/
 

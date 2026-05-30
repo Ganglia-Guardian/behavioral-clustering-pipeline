@@ -16,15 +16,28 @@ Python_Pipeline/          ← repo root
 ├── .gitignore
 ├── scripts/
 │   ├── clustering_pipeline.py   # Main pipeline (replacement for VPAPPAxes.m)
+│   ├── batch_run.py             # Batch runner: processes all datasets, generates summary report
 │   ├── prepare_test_data.py     # Converts raw Harp CSV to pipeline-ready format
 │   ├── compare_results.py       # Compares Python output against Matlab baseline
 │   └── run_benchmark.py         # One-command benchmark: runs all methods and prints comparison table
-└── test_outputs/
-    ├── combined_harp_data_cleaned.csv   # Preprocessed input (pipeline-ready format)
-    ├── inspect_stage1_raw.csv           # Raw sensor values (71,760 rows)
-    ├── inspect_stage2_processed.csv     # Physical-unit signals after filtering
-    ├── inspect_stage3_features.csv      # Histogram feature matrix (1,196 windows × 396 features)
-    └── python_ap_results.csv            # AP clustering output (7 clusters, test data)
+├── test_outputs/
+│   ├── combined_harp_data_cleaned.csv   # Preprocessed input (pipeline-ready format)
+│   ├── inspect_stage1_raw.csv           # Raw sensor values (71,760 rows)
+│   ├── inspect_stage2_processed.csv     # Physical-unit signals after filtering
+│   ├── inspect_stage3_features.csv      # Histogram feature matrix (1,196 windows × 396 features)
+│   └── python_ap_results.csv            # AP clustering output (7 clusters, test data)
+└── results/
+    ├── summary_report.txt               # Full batch run report (timing, clusters, quality)
+    ├── summary_metrics.csv              # Machine-readable summary of all datasets
+    ├── short_comparison_test/
+    ├── comparison_test/
+    ├── control_mouse_1_jul/
+    ├── control_mouse_1_oct/
+    ├── mp_mouse_1_jul/
+    ├── mp_mouse_1_oct/
+    ├── moving_test/
+    └── still_test/
+        └── Cluster_detail_results.csv   # ClusterIdx | Timestamp | Folder_Name
 ```
 
 ---
@@ -85,14 +98,31 @@ The `test_outputs/` folder already contains one for the included 6-minute test r
 | `--output` | *(required)* | Path for output `Cluster_detail_results.csv` |
 | `--arena` | `3d_wired` | Arena type: `3d_wired`, `3d_wireless`, `2d_wired`, `2d_wireless` |
 | `--use-ap` | off | Use Affinity Propagation (same algorithm as Matlab). Recommended for N < 10,000 windows. |
-| `--min-cluster-size` | `15` | HDBSCAN minimum cluster size (only used without `--use-ap`) |
+| `--preference` | auto | AP preference value. Higher (toward 0) → more clusters. Lower (more negative) → fewer clusters. Default uses `min(similarity)` matching Matlab. Only used with `--use-ap`. |
+| `--min-cluster-size` | `15` | HDBSCAN minimum cluster size (only used without `--use-ap`). Smaller → more clusters. |
+| `--n-neighbors` | auto | UMAP n_neighbors. Lower (10–20) → more clusters. Higher (40–80) → fewer clusters. Only used without `--use-ap`. |
+| `--ann-k` | `100` | FAISS nearest neighbors (used with `--use-ap` for N > 10,000, default: 100) |
 
 **Choosing between AP and HDBSCAN:**
 
 | Data size | Recommended | Reason |
 |---|---|---|
-| N < 10,000 windows | `--use-ap` | Closest to Matlab results, stable |
+| N < 10,000 windows | `--use-ap` | Closest to Matlab results, stable, no noise points |
 | N > 10,000 windows | *(default HDBSCAN)* | AP is O(N²) and infeasible at scale |
+
+**Tuning cluster count:**
+
+```bash
+# AP: adjust --preference (printed automatically on each run)
+python3 scripts/clustering_pipeline.py --use-ap --preference -3000   # more clusters
+python3 scripts/clustering_pipeline.py --use-ap --preference -5776   # default (fewer)
+
+# HDBSCAN: adjust --n-neighbors and --min-cluster-size
+python3 scripts/clustering_pipeline.py --n-neighbors 20 --min-cluster-size 10   # more clusters
+python3 scripts/clustering_pipeline.py --n-neighbors 50 --min-cluster-size 40   # fewer clusters
+```
+
+**Quality metric:** Every run prints a **Silhouette Score** (0–1). Above 0.5 is good; 0.25–0.5 is reasonable; below 0.25 suggests clusters overlap or the parameter needs tuning.
 
 **Output file columns** (same as Matlab's `Cluster_detail_results.csv`):
 
@@ -124,6 +154,20 @@ Requires a `.mat` file produced by the original Matlab pipeline.
 | `--matlab-field` | `idx` | Field that holds per-window labels |
 
 Prints cluster count, size distribution, and agreement metrics (ARI, NMI) side by side.
+
+---
+
+### Batch run on all datasets (optional)
+
+Runs the pipeline on every dataset under `lab_data/` and writes results to `results/`.
+Generates `summary_report.txt` (human-readable) and `summary_metrics.csv` (machine-readable)
+with per-dataset timing, cluster count, noise percentage, and Silhouette Score.
+
+```bash
+.venv/bin/python3 scripts/batch_run.py
+```
+
+Edit the `DATASETS` list at the top of `batch_run.py` to point to your own recordings.
 
 ---
 

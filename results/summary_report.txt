@@ -1,0 +1,153 @@
+======================================================================
+  Clustering Pipeline — Batch Run Summary
+  Generated: 2026-05-29 21:10
+======================================================================
+
+  Dataset                     Windows  Algo    Clusters Noise% Silhouette Quality    Total(s) 
+  --------------------------------------------------------------------------------------------
+  short_comparison_test       1,196    AP      7        0.0%   0.1938     poor       1.5      
+  comparison_test             13,807   HDBSCAN 2        0.4%   0.6296     good       24.2     
+  control_mouse_1_jul         23,926   HDBSCAN 2        7.2%   0.2387     poor       29.9     
+  control_mouse_1_oct         23,910   HDBSCAN 4        0.0%   0.4523     reasonable 28.2     
+  mp_mouse_1_jul              19,771   HDBSCAN 13       2.5%   0.2956     reasonable 23.1     
+  mp_mouse_1_oct              23,912   HDBSCAN 17       5.2%   0.0394     poor       28.6     
+  moving_test                 47,524   HDBSCAN 46       3.9%   0.1024     poor       57.3     
+  still_test                  23,930   HDBSCAN 2        0.0%   0.4072     reasonable 27.8     
+
+  Note: Silhouette Score — >0.5 good | 0.25–0.5 reasonable | <0.25 poor
+
+──────────────────────────────────────────────────────────────────────
+  Timing breakdown (seconds)
+──────────────────────────────────────────────────────────────────────
+  Dataset                     Prepare  Load   Signal  Features  Cluster  Total  
+  ------------------------------------------------------------------------------
+  short_comparison_test       0.47     0.03   0.01    0.01      0.84     1.5    
+  comparison_test             5.88     0.34   0.05    0.14      17.37    24.18  
+  control_mouse_1_jul         11.28    0.56   0.08    0.24      17.31    29.91  
+  control_mouse_1_oct         10.69    0.58   0.08    0.25      16.17    28.18  
+  mp_mouse_1_jul              8.81     0.47   0.07    0.2       13.14    23.11  
+  mp_mouse_1_oct              11.42    0.57   0.09    0.25      15.88    28.65  
+  moving_test                 21.81    1.14   0.18    0.49      33.21    57.31  
+  still_test                  10.23    0.56   0.09    0.25      16.25    27.82  
+
+──────────────────────────────────────────────────────────────────────
+  short_comparison_test
+──────────────────────────────────────────────────────────────────────
+  Note             : 6-min test clip. AP used (N < 10,000).
+  Algorithm        : AP
+  Duration         : 6.0 min
+  Windows          : 1,196
+  Clusters found   : 7
+  Noise points     : 0  (0.0%)
+  Cluster sizes    : mean=171  std=73  min=62  max=288
+  Top-3 clusters   : [(2, 288), (6, 225), (4, 207)]
+  Silhouette Score : 0.1938  (poor)
+  Timing (s)       : prepare=0.47  load=0.03  signal=0.01  features=0.01  cluster=0.84  total=1.5
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/short_comparison_test/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  comparison_test
+──────────────────────────────────────────────────────────────────────
+  Note             : ~69-min 2D/3D arena comparison recording.
+  Algorithm        : HDBSCAN
+  Duration         : 69.0 min
+  Windows          : 13,807
+  Clusters found   : 2
+  Noise points     : 49  (0.4%)
+  Cluster sizes    : mean=6879  std=6666  min=213  max=13545
+  Top-3 clusters   : [(1, 13545), (0, 213)]
+  Silhouette Score : 0.6296  (good)
+  Timing (s)       : prepare=5.88  load=0.34  signal=0.05  features=0.14  cluster=17.37  total=24.18
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/comparison_test/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  control_mouse_1_jul
+──────────────────────────────────────────────────────────────────────
+  Note             : Control mouse, session 1 (July 2025).
+  Algorithm        : HDBSCAN
+  Duration         : 119.6 min
+  Windows          : 23,926
+  Clusters found   : 2
+  Noise points     : 1,719  (7.2%)
+  Cluster sizes    : mean=11104  std=10952  min=151  max=22056
+  Top-3 clusters   : [(0, 22056), (1, 151)]
+  Silhouette Score : 0.2387  (poor)
+  Timing (s)       : prepare=11.28  load=0.56  signal=0.08  features=0.24  cluster=17.31  total=29.91
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/control_mouse_1_jul/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  control_mouse_1_oct
+──────────────────────────────────────────────────────────────────────
+  Note             : Control mouse, session 2 (October 2025, 3 months later).
+  Algorithm        : HDBSCAN
+  Duration         : 119.5 min
+  Windows          : 23,910
+  Clusters found   : 4
+  Noise points     : 0  (0.0%)
+  Cluster sizes    : mean=5978  std=10108  min=116  max=23485
+  Top-3 clusters   : [(3, 23485), (0, 169), (1, 140)]
+  Silhouette Score : 0.4523  (reasonable)
+  Timing (s)       : prepare=10.69  load=0.58  signal=0.08  features=0.25  cluster=16.17  total=28.18
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/control_mouse_1_oct/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  mp_mouse_1_jul
+──────────────────────────────────────────────────────────────────────
+  Note             : Mito Park mouse (Parkinson model), session 1 (July 2025).
+  Algorithm        : HDBSCAN
+  Duration         : 98.9 min
+  Windows          : 19,771
+  Clusters found   : 13
+  Noise points     : 488  (2.5%)
+  Cluster sizes    : mean=1483  std=4694  min=72  max=17742
+  Top-3 clusters   : [(0, 17742), (9, 313), (6, 159)]
+  Silhouette Score : 0.2956  (reasonable)
+  Timing (s)       : prepare=8.81  load=0.47  signal=0.07  features=0.2  cluster=13.14  total=23.11
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/mp_mouse_1_jul/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  mp_mouse_1_oct
+──────────────────────────────────────────────────────────────────────
+  Note             : Mito Park mouse (Parkinson model), session 2 (October 2025).
+  Algorithm        : HDBSCAN
+  Duration         : 119.6 min
+  Windows          : 23,912
+  Clusters found   : 17
+  Noise points     : 1,240  (5.2%)
+  Cluster sizes    : mean=1334  std=4473  min=80  max=19219
+  Top-3 clusters   : [(0, 19219), (2, 513), (16, 422)]
+  Silhouette Score : 0.0394  (poor)
+  Timing (s)       : prepare=11.42  load=0.57  signal=0.09  features=0.25  cluster=15.88  total=28.65
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/mp_mouse_1_oct/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  moving_test
+──────────────────────────────────────────────────────────────────────
+  Note             : ~238-min baseline recording: mouse in motion.
+  Algorithm        : HDBSCAN
+  Duration         : 237.6 min
+  Windows          : 47,524
+  Clusters found   : 46
+  Noise points     : 1,838  (3.9%)
+  Cluster sizes    : mean=993  std=4198  min=152  max=29083
+  Top-3 clusters   : [(8, 29083), (22, 2086), (3, 750)]
+  Silhouette Score : 0.1024  (poor)
+  Timing (s)       : prepare=21.81  load=1.14  signal=0.18  features=0.49  cluster=33.21  total=57.31
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/moving_test/Cluster_detail_results.csv
+
+──────────────────────────────────────────────────────────────────────
+  still_test
+──────────────────────────────────────────────────────────────────────
+  Note             : ~120-min baseline recording: mouse relatively still.
+  Algorithm        : HDBSCAN
+  Duration         : 119.7 min
+  Windows          : 23,930
+  Clusters found   : 2
+  Noise points     : 0  (0.0%)
+  Cluster sizes    : mean=11965  std=11885  min=80  max=23850
+  Top-3 clusters   : [(1, 23850), (0, 80)]
+  Silhouette Score : 0.4072  (reasonable)
+  Timing (s)       : prepare=10.23  load=0.56  signal=0.09  features=0.25  cluster=16.25  total=27.82
+  Result CSV       : /Users/chuqiwang/VSCode/Ganglia-Guardian/Python_Pipeline/results/still_test/Cluster_detail_results.csv
+
+======================================================================

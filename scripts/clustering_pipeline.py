@@ -336,7 +336,8 @@ def _build_cdf_features(hist_matrix: np.ndarray, channel_sizes: list) -> np.ndar
 
 def cluster_hdbscan(hist_matrix: np.ndarray,
                     channel_sizes: list,
-                    min_cluster_size: int = 15) -> np.ndarray:
+                    min_cluster_size: int = 15,
+                    n_neighbors: int = None) -> np.ndarray:
     """
     Cluster behavioral windows with UMAP → HDBSCAN.
 
@@ -366,6 +367,10 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
     Parameters
     ----------
     min_cluster_size : minimum windows to form a cluster (default 15).
+    n_neighbors      : UMAP n_neighbors — controls local vs global structure.
+                       Small (10–20) → fine local detail, more clusters.
+                       Large (40–80) → broader structure, fewer clusters.
+                       Default None auto-selects: min(50, max(15, N // 20)).
 
     Returns
     -------
@@ -380,9 +385,14 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
     cdf_features = _build_cdf_features(hist_matrix, channel_sizes)
     t0 = time.time()
 
-    # n_neighbors adapts to dataset size: larger datasets can afford a broader
-    # neighbourhood; small recordings cap at 50 to avoid over-smoothing.
-    n_neighbors = min(50, max(15, N // 20))
+    if n_neighbors is None:
+        # Auto: larger datasets can afford a broader neighbourhood;
+        # small recordings cap at 50 to avoid over-smoothing.
+        n_neighbors = min(50, max(15, N // 20))
+        print(f"      n_neighbors: {n_neighbors}  (auto — use --n-neighbors to override)")
+    else:
+        print(f"      n_neighbors: {n_neighbors}  (user-specified)")
+
     n_components = 15
     print(f"      UMAP: {cdf_features.shape[1]}-D → {n_components}-D  "
           f"(n_neighbors={n_neighbors}, metric=L1) ...")
@@ -420,27 +430,41 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
 
 def cluster_ap_sparse(hist_matrix: np.ndarray,
                       channel_sizes: list,
-                      K: int = 100) -> np.ndarray:
+                      K: int = 100,
+                      preference: float = None) -> np.ndarray:
     """
     Run Affinity Propagation on a CDF-L1 similarity matrix.
 
     For N <= 10,000 the full N×N matrix is built via scipy.cdist — this
     matches the Matlab pipeline exactly (same algorithm, same preference =
-    median of all pairwise similarities) and gives directly comparable results.
+    min of all pairwise similarities) and gives directly comparable results.
 
-    For N > 10,000 a FAISS sparse matrix (K nearest neighbours) is used
-    instead, but NOTE: sklearn's AP still costs O(N²) per iteration, so it
-    remains infeasible for very large N regardless of how the matrix is built.
-    Prefer cluster_hdbscan for production runs on large datasets.
+    For N > 10,000 AP is refused: sklearn AP still costs O(N²) per iteration
+    regardless of how the similarity matrix is built, making it infeasible.
+    Use cluster_hdbscan for large datasets.
 
     Parameters
     ----------
-    K : neighbours used for the sparse path (N > 10,000 only)
+    K          : neighbours for FAISS ANN (not used for N <= 10,000)
+    preference : AP preference value (diagonal of affinity matrix).
+                 Controls number of clusters: higher → more clusters,
+                 lower → fewer clusters.
+                 Default None uses min(affinity) — the most conservative
+                 setting, matching Matlab's VPAPPAxes.m behaviour.
+                 Tip: start from the printed default and tune toward 0 for
+                 more clusters, or further negative for fewer.
     """
     from sklearn.cluster import AffinityPropagation
     import scipy.spatial.distance as ssd
 
     N = hist_matrix.shape[0]
+
+    if N > 10_000:
+        raise ValueError(
+            f"AP clustering is not feasible for N={N:,} windows "
+            f"(requires O(N²) memory = {N**2*8/1e9:.1f} GB and ~{N**2*1e-6/3600:.0f} hours). "
+            f"Use HDBSCAN instead (omit --use-ap)."
+        )
 
     cdf_features = _build_cdf_features(hist_matrix, channel_sizes)
 
@@ -448,47 +472,31 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
     print(f"      WARNING: AP is O(N²) per iteration — feasible only for N < ~10,000.")
     t0 = time.time()
 
-    if N <= 10_000:
-        # Full pairwise L1 distance → similarity = -(dist²)
-        # This exactly mirrors runDistanceSim.m option 2 (Wasserstein / EMD)
-        print(f"      Building full {N}×{N} similarity matrix via scipy.cdist ...")
-        dist = ssd.cdist(cdf_features, cdf_features, metric="cityblock").astype(np.float64)
-        affinity = -(dist ** 2)
-        # Use min similarity as preference — matches VPAPPAxes.m where
-        # Clusters.param equals min(sim), giving ~10-20 clusters on typical sessions
+    # Full pairwise L1 distance → similarity = -(dist²)
+    # Mirrors runDistanceSim.m option 2 (Wasserstein / EMD)
+    print(f"      Building full {N}×{N} similarity matrix via scipy.cdist ...")
+    dist     = ssd.cdist(cdf_features, cdf_features, metric="cityblock").astype(np.float64)
+    affinity = -(dist ** 2)
+
+    if preference is None:
         preference = float(affinity.min())
-        print(f"      Preference (min similarity): {preference:.4f}")
-        ap = AffinityPropagation(
-            affinity   = "precomputed",
-            preference = preference,
-            damping    = 0.9,
-            max_iter   = 1000,
-            convergence_iter = 100,
-            random_state = 0,
-        )
-        labels = ap.fit_predict(affinity)
+        print(f"      Preference: {preference:.4f}  (auto = min similarity)")
+        print(f"      Tip: use --preference to tune cluster count "
+              f"(toward 0 = more clusters, more negative = fewer clusters)")
     else:
-        # Sparse path: build via FAISS, then fill missing entries with worst similarity
-        s   = build_sparse_similarity(hist_matrix, channel_sizes, K=K)
-        min_sim = float(s[:, 2].min())
-        # Start with a dense matrix of the worst similarity so that non-neighbours
-        # have the lowest possible affinity (matches Matlab's sparse AP behaviour)
-        affinity = np.full((N, N), min_sim, dtype=np.float64)
-        rows = s[:, 0].astype(int)
-        cols = s[:, 1].astype(int)
-        affinity[rows, cols] = s[:, 2]
-        affinity[cols, rows] = s[:, 2]      # symmetrise
-        preference = float(np.median(s[:, 2]))
-        np.fill_diagonal(affinity, preference)
-        ap = AffinityPropagation(
-            affinity   = "precomputed",
-            preference = preference,
-            damping    = 0.9,
-            max_iter   = 1000,
-            convergence_iter = 100,
-            random_state = 0,
-        )
-        labels = ap.fit_predict(affinity)
+        print(f"      Preference: {preference:.4f}  (user-specified)")
+
+    np.fill_diagonal(affinity, preference)
+
+    ap = AffinityPropagation(
+        affinity         = "precomputed",
+        preference       = preference,
+        damping          = 0.9,
+        max_iter         = 1000,
+        convergence_iter = 100,
+        random_state     = 0,
+    )
+    labels = ap.fit_predict(affinity)
 
     print(f"      AP done in {time.time() - t0:.1f}s  |  clusters: {len(set(labels))}")
     return labels
@@ -498,12 +506,38 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
 # Main pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _silhouette(cdf_features: np.ndarray, labels: np.ndarray) -> float:
+    """
+    Compute Silhouette Score on a random subset (max 2,000 points) using L1.
+    Returns NaN if fewer than 2 clusters are found (excluding noise).
+    Score interpretation: >0.5 good, 0.25–0.5 reasonable, <0.25 poor.
+    """
+    from sklearn.metrics import silhouette_score
+
+    valid_mask = labels >= 0
+    valid_labels = labels[valid_mask]
+    if len(set(valid_labels)) < 2:
+        return float("nan")
+
+    feats = cdf_features[valid_mask]
+
+    # Subsample for speed — silhouette is O(N²)
+    max_samples = 2_000
+    if len(feats) > max_samples:
+        idx = np.random.default_rng(42).choice(len(feats), max_samples, replace=False)
+        feats, valid_labels = feats[idx], valid_labels[idx]
+
+    return float(silhouette_score(feats, valid_labels, metric="l1"))
+
+
 def run_pipeline(input_csv:         str,
                  output_csv:        str,
-                 arena:             str  = "3d_wired",
-                 min_cluster_size:  int  = 15,
-                 use_ap:            bool = False,
-                 ann_k:             int  = 100) -> None:
+                 arena:             str   = "3d_wired",
+                 min_cluster_size:  int   = 15,
+                 use_ap:            bool  = False,
+                 ann_k:             int   = 100,
+                 preference:        float = None,
+                 n_neighbors:       int   = None) -> None:
     """
     Full replacement for Matlab's VPAPPAxes.m.
 
@@ -514,22 +548,40 @@ def run_pipeline(input_csv:         str,
     t_start = time.time()
 
     raw_motion, timestamps, folder_names = load_cleaned_motion(input_csv)
-    sensor       = process_motion(raw_motion)
-    bin_edges    = ARENA_BIN_EDGES[arena]
+    sensor        = process_motion(raw_motion)
+    bin_edges     = ARENA_BIN_EDGES[arena]
     channel_sizes = [len(e) - 1 for e in bin_edges]
-    hist_matrix  = extract_histogram_features(sensor, bin_edges)
-    N_windows    = hist_matrix.shape[0]
+    hist_matrix   = extract_histogram_features(sensor, bin_edges)
+    N_windows     = hist_matrix.shape[0]
 
     if use_ap:
-        labels = cluster_ap_sparse(hist_matrix, channel_sizes, K=ann_k)
+        labels = cluster_ap_sparse(hist_matrix, channel_sizes,
+                                   K=ann_k, preference=preference)
     else:
-        labels = cluster_hdbscan(hist_matrix, channel_sizes, min_cluster_size)
+        labels = cluster_hdbscan(hist_matrix, channel_sizes,
+                                 min_cluster_size, n_neighbors=n_neighbors)
 
-    # Assign the timestamp of the window's middle sample to each window,
-    # consistent with runTimestampClusterPairing.m in the Matlab pipeline
-    mid           = WIN_SIZE // 2
-    win_ts        = timestamps[mid::WIN_SIZE][:N_windows]
-    win_folders   = folder_names[::WIN_SIZE][:N_windows]
+    # ── Silhouette Score ──────────────────────────────────────────────────────
+    print("[5/5] Computing cluster quality (Silhouette Score)...")
+    cdf_feats = _build_cdf_features(hist_matrix, channel_sizes)
+    sil = _silhouette(cdf_feats, labels)
+    n_clusters = len(set(labels) - {-1})
+    n_noise    = int((labels == -1).sum())
+
+    print(f"      Clusters found  : {n_clusters}")
+    if n_noise:
+        print(f"      Noise points    : {n_noise:,} ({100*n_noise/N_windows:.1f}%)")
+    if not np.isnan(sil):
+        quality = "good" if sil > 0.5 else "reasonable" if sil > 0.25 else "poor"
+        print(f"      Silhouette Score: {sil:.4f}  ({quality})")
+        print(f"      Interpretation  : >0.5 good  |  0.25–0.5 reasonable  |  <0.25 poor")
+    else:
+        print(f"      Silhouette Score: N/A (need ≥ 2 clusters)")
+
+    # ── Save results ──────────────────────────────────────────────────────────
+    mid         = WIN_SIZE // 2
+    win_ts      = timestamps[mid::WIN_SIZE][:N_windows]
+    win_folders = folder_names[::WIN_SIZE][:N_windows]
 
     # Convert to 1-based cluster indices; noise points (label=-1) become 0
     cluster_idx = np.where(labels < 0, 0, labels + 1)
@@ -546,7 +598,6 @@ def run_pipeline(input_csv:         str,
     elapsed = time.time() - t_start
     print(f"\nDone. Total time: {elapsed / 60:.1f} min")
     print(f"Saved to        : {output_csv}")
-    print(f"Clusters found  : {cluster_idx.max()}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,6 +636,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ann-k", type=int, default=100,
         help="Number of nearest neighbors for FAISS ANN (used with --use-ap, default: 100)",
     )
+    p.add_argument(
+        "--preference", type=float, default=None,
+        help="AP preference value (controls cluster count). "
+             "Higher (toward 0) → more clusters. "
+             "Lower (more negative) → fewer clusters. "
+             "Default: min(similarity matrix), matching Matlab behaviour. "
+             "Only used with --use-ap.",
+    )
+    p.add_argument(
+        "--n-neighbors", type=int, default=None,
+        help="UMAP n_neighbors (default: auto = min(50, max(15, N//20))). "
+             "Lower (10–20) → more fine-grained local structure, more clusters. "
+             "Higher (40–80) → broader structure, fewer clusters. "
+             "Only used without --use-ap.",
+    )
     return p
 
 
@@ -597,4 +663,6 @@ if __name__ == "__main__":
         min_cluster_size = args.min_cluster_size,
         use_ap           = args.use_ap,
         ann_k            = args.ann_k,
+        preference       = args.preference,
+        n_neighbors      = args.n_neighbors,
     )

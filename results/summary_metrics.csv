@@ -1,0 +1,9 @@
+dataset,status,algorithm,duration_min,n_windows,n_clusters,n_noise,noise_pct,silhouette,cluster_mean,cluster_std,cluster_min,cluster_max,t_prepare_s,t_load_s,t_signal_s,t_features_s,t_cluster_s,t_total_s
+short_comparison_test,ok,AP,6.0,1196,7,0,0.0,0.1938,170.9,73.1,62,288,0.47,0.03,0.01,0.01,0.84,1.5
+comparison_test,ok,HDBSCAN,69.0,13807,2,49,0.35,0.6296,6879.0,6666.0,213,13545,5.88,0.34,0.05,0.14,17.37,24.18
+control_mouse_1_jul,ok,HDBSCAN,119.6,23926,2,1719,7.18,0.2387,11103.5,10952.5,151,22056,11.28,0.56,0.08,0.24,17.31,29.91
+control_mouse_1_oct,ok,HDBSCAN,119.5,23910,4,0,0.0,0.4523,5977.5,10108.0,116,23485,10.69,0.58,0.08,0.25,16.17,28.18
+mp_mouse_1_jul,ok,HDBSCAN,98.9,19771,13,488,2.47,0.2956,1483.3,4693.9,72,17742,8.81,0.47,0.07,0.2,13.14,23.11
+mp_mouse_1_oct,ok,HDBSCAN,119.6,23912,17,1240,5.19,0.0394,1333.6,4472.9,80,19219,11.42,0.57,0.09,0.25,15.88,28.65
+moving_test,ok,HDBSCAN,237.6,47524,46,1838,3.87,0.1024,993.2,4197.8,152,29083,21.81,1.14,0.18,0.49,33.21,57.31
+still_test,ok,HDBSCAN,119.7,23930,2,0,0.0,0.4072,11965.0,11885.0,80,23850,10.23,0.56,0.09,0.25,16.25,27.82
