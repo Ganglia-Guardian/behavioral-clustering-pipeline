@@ -460,11 +460,9 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
     N = hist_matrix.shape[0]
 
     if N > 10_000:
-        raise ValueError(
-            f"AP clustering is not feasible for N={N:,} windows "
-            f"(requires O(N²) memory = {N**2*8/1e9:.1f} GB and ~{N**2*1e-6/3600:.0f} hours). "
-            f"Use HDBSCAN instead (omit --use-ap)."
-        )
+        mem_gb = N ** 2 * 8 / 1e9
+        print(f"      WARNING: N={N:,} — full N×N matrix = {mem_gb:.1f} GB. "
+              f"Ensure you have enough RAM. Use --use-ap-sampled for a safer option.")
 
     cdf_features = _build_cdf_features(hist_matrix, channel_sizes)
 
@@ -503,6 +501,103 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step 5c — AP with random sampling  (scales to large N)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cluster_ap_sampled(hist_matrix: np.ndarray,
+                       channel_sizes: list,
+                       sample_size: int = 6000,
+                       preference: float = None) -> np.ndarray:
+    """
+    Affinity Propagation on a random subset, then assign all windows to the
+    nearest exemplar.  Scales AP to arbitrarily large N.
+
+    Two-step process
+    ----------------
+    1. Randomly sample min(sample_size, N) windows.
+       Run full AP on this subset to find cluster exemplars.
+       sample_size=6000 → affinity matrix = 6000² × 8 bytes = 288 MB.
+
+    2. Assign every window (including those not in the sample) to its nearest
+       exemplar using an exact FAISS L1 search.
+       Cost: O(N × n_exemplars) — negligible.
+
+    Why sampling works
+    ------------------
+    A typical 2-hour recording (~24,000 windows) contains 10–20 distinct
+    behaviours.  Each behaviour spans hundreds of windows, so a random 25 %
+    sample (~6,000 windows) will contain every behaviour multiple times and
+    AP will find the same exemplars as on the full dataset.
+
+    Parameters
+    ----------
+    sample_size : number of windows to pass to AP (default 6,000).
+    preference  : AP preference — controls cluster count, same as
+                  cluster_ap_sparse().  Default None uses min(affinity).
+    """
+    from sklearn.cluster import AffinityPropagation
+    import scipy.spatial.distance as ssd
+
+    N = hist_matrix.shape[0]
+
+    if N <= sample_size:
+        print(f"[4/5] AP sampled: N={N:,} ≤ sample_size={sample_size:,}, running full AP.")
+        return cluster_ap_sparse(hist_matrix, channel_sizes, preference=preference)
+
+    print(f"[4/5] AP sampled  (N={N:,}, sample={sample_size:,}, "
+          f"{100*sample_size/N:.0f}% of data) ...")
+
+    # ── Build CDF features for all windows ────────────────────────────────────
+    cdf_all = _build_cdf_features(hist_matrix, channel_sizes)  # (N, d)
+
+    # ── Random sample ─────────────────────────────────────────────────────────
+    rng        = np.random.default_rng(42)
+    sample_idx = np.sort(rng.choice(N, sample_size, replace=False))
+    cdf_sample = cdf_all[sample_idx]                           # (sample_size, d)
+
+    # ── AP on sample ──────────────────────────────────────────────────────────
+    print(f"      Building {sample_size}×{sample_size} affinity matrix "
+          f"({sample_size**2*8/1e6:.0f} MB) ...")
+    dist     = ssd.cdist(cdf_sample, cdf_sample, metric="cityblock").astype(np.float64)
+    affinity = -(dist ** 2)
+
+    if preference is None:
+        preference = float(affinity.min())
+        print(f"      Preference: {preference:.4f}  (auto = min similarity)")
+    else:
+        print(f"      Preference: {preference:.4f}  (user-specified)")
+
+    np.fill_diagonal(affinity, preference)
+
+    t0 = time.time()
+    ap = AffinityPropagation(
+        affinity         = "precomputed",
+        preference       = preference,
+        damping          = 0.9,
+        max_iter         = 1000,
+        convergence_iter = 100,
+        random_state     = 0,
+    )
+    sample_labels = ap.fit_predict(affinity)
+    n_clusters    = len(set(sample_labels))
+    print(f"      AP on sample: {time.time()-t0:.1f}s  |  {n_clusters} clusters found")
+
+    # ── Get exemplar CDF feature vectors ──────────────────────────────────────
+    exemplar_idx_in_sample = ap.cluster_centers_indices_      # indices into sample
+    exemplar_cdf = cdf_sample[exemplar_idx_in_sample].astype(np.float32)  # (K, d)
+
+    # ── Assign all N windows to nearest exemplar via exact FAISS L1 ───────────
+    print(f"      Assigning all {N:,} windows to nearest exemplar (FAISS) ...")
+    index = faiss.IndexFlat(exemplar_cdf.shape[1], faiss.METRIC_L1)
+    index.add(exemplar_cdf)
+    _, assignments = index.search(cdf_all.astype(np.float32), 1)
+    labels = assignments.ravel().astype(int)
+
+    print(f"      Total time: {time.time()-t0:.1f}s  |  Clusters: {n_clusters}")
+    return labels
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -535,9 +630,11 @@ def run_pipeline(input_csv:         str,
                  arena:             str   = "3d_wired",
                  min_cluster_size:  int   = 15,
                  use_ap:            bool  = False,
+                 use_ap_sampled:    bool  = False,
                  ann_k:             int   = 100,
                  preference:        float = None,
-                 n_neighbors:       int   = None) -> None:
+                 n_neighbors:       int   = None,
+                 sample_size:       int   = 6000) -> None:
     """
     Full replacement for Matlab's VPAPPAxes.m.
 
@@ -557,6 +654,9 @@ def run_pipeline(input_csv:         str,
     if use_ap:
         labels = cluster_ap_sparse(hist_matrix, channel_sizes,
                                    K=ann_k, preference=preference)
+    elif use_ap_sampled:
+        labels = cluster_ap_sampled(hist_matrix, channel_sizes,
+                                    sample_size=sample_size, preference=preference)
     else:
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
                                  min_cluster_size, n_neighbors=n_neighbors)
@@ -628,9 +728,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--use-ap", action="store_true",
-        help="Use Affinity Propagation instead of HDBSCAN. "
-             "Produces results closest to the original Matlab pipeline but "
-             "is still O(N²) per iteration — only suitable for N < ~10,000.",
+        help="Use Affinity Propagation (full N×N matrix). "
+             "Closest to Matlab pipeline. Only suitable for N < ~10,000. "
+             "For large data use --use-ap-sampled instead.",
+    )
+    p.add_argument(
+        "--use-ap-sampled", action="store_true",
+        help="Use AP with random sampling (recommended for N > 10,000). "
+             "Runs AP on a random subset (--sample-size windows), finds exemplars, "
+             "then assigns all N windows to the nearest exemplar via FAISS. "
+             "Scales to arbitrarily large datasets.",
+    )
+    p.add_argument(
+        "--sample-size", type=int, default=6000,
+        help="Number of windows to sample for AP sampled (default: 6000). "
+             "Only used with --use-ap-sampled.",
     )
     p.add_argument(
         "--ann-k", type=int, default=100,
@@ -641,15 +753,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="AP preference value (controls cluster count). "
              "Higher (toward 0) → more clusters. "
              "Lower (more negative) → fewer clusters. "
-             "Default: min(similarity matrix), matching Matlab behaviour. "
-             "Only used with --use-ap.",
+             "Default: min(similarity matrix). Used with --use-ap or --use-ap-sampled.",
     )
     p.add_argument(
         "--n-neighbors", type=int, default=None,
         help="UMAP n_neighbors (default: auto = min(50, max(15, N//20))). "
-             "Lower (10–20) → more fine-grained local structure, more clusters. "
-             "Higher (40–80) → broader structure, fewer clusters. "
-             "Only used without --use-ap.",
+             "Lower (10–20) → more clusters. Higher (40–80) → fewer clusters. "
+             "Only used without --use-ap or --use-ap-sampled.",
     )
     return p
 
@@ -662,7 +772,9 @@ if __name__ == "__main__":
         arena            = args.arena,
         min_cluster_size = args.min_cluster_size,
         use_ap           = args.use_ap,
+        use_ap_sampled   = args.use_ap_sampled,
         ann_k            = args.ann_k,
         preference       = args.preference,
         n_neighbors      = args.n_neighbors,
+        sample_size      = args.sample_size,
     )

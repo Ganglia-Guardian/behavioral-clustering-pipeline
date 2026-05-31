@@ -17,9 +17,10 @@ Python_Pipeline/          ← repo root
 ├── scripts/
 │   ├── clustering_pipeline.py   # Main pipeline (replacement for VPAPPAxes.m)
 │   ├── batch_run.py             # Batch runner: processes all datasets, generates summary report
+│   ├── batch_compare.py         # Compares all three clustering methods side by side
 │   ├── prepare_test_data.py     # Converts raw Harp CSV to pipeline-ready format
 │   ├── compare_results.py       # Compares Python output against Matlab baseline
-│   └── run_benchmark.py         # One-command benchmark: runs all methods and prints comparison table
+│   └── run_benchmark.py         # Benchmark: runs all methods and prints comparison table
 ├── test_outputs/
 │   ├── combined_harp_data_cleaned.csv   # Preprocessed input (pipeline-ready format)
 │   ├── inspect_stage1_raw.csv           # Raw sensor values (71,760 rows)
@@ -27,17 +28,14 @@ Python_Pipeline/          ← repo root
 │   ├── inspect_stage3_features.csv      # Histogram feature matrix (1,196 windows × 396 features)
 │   └── python_ap_results.csv            # AP clustering output (7 clusters, test data)
 └── results/
-    ├── summary_report.txt               # Full batch run report (timing, clusters, quality)
+    ├── summary_report.txt               # Batch run report (timing, clusters, quality)
     ├── summary_metrics.csv              # Machine-readable summary of all datasets
-    ├── short_comparison_test/
-    ├── comparison_test/
-    ├── control_mouse_1_jul/
-    ├── control_mouse_1_oct/
-    ├── mp_mouse_1_jul/
-    ├── mp_mouse_1_oct/
-    ├── moving_test/
-    └── still_test/
-        └── Cluster_detail_results.csv   # ClusterIdx | Timestamp | Folder_Name
+    ├── method_comparison.csv            # Side-by-side comparison of all three methods
+    ├── method_comparison_report.txt     # Human-readable method comparison report
+    └── <dataset_name>/
+        ├── Cluster_detail_results_hdbscan.csv    # HDBSCAN results
+        ├── Cluster_detail_results_ap_sampled.csv # AP sampled results
+        └── Cluster_detail_results_ap_full.csv    # AP full results (small datasets only)
 ```
 
 ---
@@ -59,122 +57,113 @@ python3 -m venv .venv
 
 ## How to Run
 
-### Step 1 — Prepare raw data (first time only)
+### Step 1 — Prepare raw data
 
-The pipeline reads `combined_harp_data_cleaned.csv`, which is the output of `stitched.py`.  
-If you are starting from a raw Harp-Motion CSV instead, run this adapter first:
+The pipeline reads `combined_harp_data_cleaned.csv`.  
+Run this adapter to convert a raw Harp-Motion CSV:
 
 ```bash
 .venv/bin/python3 scripts/prepare_test_data.py \
-    --input  path/to/harp_data_cut.csv \
-    --output test_outputs/combined_harp_data_cleaned.csv \
-    --label  session_1
+    --input  path/to/Harp-Motion.csv \
+    --output path/to/combined_harp_data_cleaned.csv \
+    --label  session_name
 ```
 
-| Argument | Description |
-|---|---|
-| `--input` | Path to raw `harp_data_cut.csv` (or any Harp-Motion CSV) |
-| `--output` | Where to write the pipeline-ready CSV |
-| `--label` | Session/folder name written into each row (any string) |
+The adapter now performs full data quality processing:
+- Detects missing packets via the Counter column (0–127 wrapping)
+- Discards 300ms windows with > 10% NaN (packet loss too high)
+- Linearly interpolates remaining NaN sensor values
 
-If you already have a `combined_harp_data_cleaned.csv` from `stitched.py`, skip this step entirely.  
-The `test_outputs/` folder already contains one for the included 6-minute test recording.
+If you already have a `combined_harp_data_cleaned.csv` from `stitched.py`, skip this step.
 
 ---
 
 ### Step 2 — Run the clustering pipeline
 
+Three clustering methods are available:
+
 ```bash
+# Default: HDBSCAN (recommended for N > 10,000 windows)
 .venv/bin/python3 scripts/clustering_pipeline.py \
-    --input  test_outputs/combined_harp_data_cleaned.csv \
-    --output test_outputs/my_results.csv \
-    --arena  3d_wired \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv
+
+# AP sampled (recommended for large N, consistent cluster counts)
+.venv/bin/python3 scripts/clustering_pipeline.py \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv \
+    --use-ap-sampled
+
+# AP full (closest to Matlab, only for N < ~10,000)
+.venv/bin/python3 scripts/clustering_pipeline.py \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv \
     --use-ap
 ```
+
+**All parameters:**
 
 | Argument | Default | Description |
 |---|---|---|
 | `--input` | *(required)* | Path to `combined_harp_data_cleaned.csv` |
-| `--output` | *(required)* | Path for output `Cluster_detail_results.csv` |
+| `--output` | *(required)* | Path for output CSV |
 | `--arena` | `3d_wired` | Arena type: `3d_wired`, `3d_wireless`, `2d_wired`, `2d_wireless` |
-| `--use-ap` | off | Use Affinity Propagation (same algorithm as Matlab). Recommended for N < 10,000 windows. |
-| `--preference` | auto | AP preference value. Higher (toward 0) → more clusters. Lower (more negative) → fewer clusters. Default uses `min(similarity)` matching Matlab. Only used with `--use-ap`. |
-| `--min-cluster-size` | `15` | HDBSCAN minimum cluster size (only used without `--use-ap`). Smaller → more clusters. |
-| `--n-neighbors` | auto | UMAP n_neighbors. Lower (10–20) → more clusters. Higher (40–80) → fewer clusters. Only used without `--use-ap`. |
-| `--ann-k` | `100` | FAISS nearest neighbors (used with `--use-ap` for N > 10,000, default: 100) |
+| `--use-ap` | off | AP full (N×N matrix). Closest to Matlab. Only for N < ~10,000. |
+| `--use-ap-sampled` | off | AP with random sampling. Recommended for N > 10,000. |
+| `--sample-size` | `6000` | Windows sampled for AP sampled. Only with `--use-ap-sampled`. |
+| `--preference` | auto | AP preference (controls cluster count). Higher → more clusters. Used with `--use-ap` or `--use-ap-sampled`. |
+| `--min-cluster-size` | `15` | HDBSCAN min cluster size. Smaller → more clusters. Default only. |
+| `--n-neighbors` | auto | UMAP n_neighbors. Lower → more clusters. Default only. |
 
-**Choosing between AP and HDBSCAN:**
+**Choosing a method:**
 
 | Data size | Recommended | Reason |
 |---|---|---|
-| N < 10,000 windows | `--use-ap` | Closest to Matlab results, stable, no noise points |
-| N > 10,000 windows | *(default HDBSCAN)* | AP is O(N²) and infeasible at scale |
+| N < 10,000 | `--use-ap` | Closest to Matlab, stable |
+| N > 10,000, cross-session comparison | `--use-ap-sampled` | Consistent ~20 clusters across sessions |
+| N > 10,000, cluster quality priority | *(default HDBSCAN)* | Higher Silhouette in some cases |
 
-**Tuning cluster count:**
-
-```bash
-# AP: adjust --preference (printed automatically on each run)
-python3 scripts/clustering_pipeline.py --use-ap --preference -3000   # more clusters
-python3 scripts/clustering_pipeline.py --use-ap --preference -5776   # default (fewer)
-
-# HDBSCAN: adjust --n-neighbors and --min-cluster-size
-python3 scripts/clustering_pipeline.py --n-neighbors 20 --min-cluster-size 10   # more clusters
-python3 scripts/clustering_pipeline.py --n-neighbors 50 --min-cluster-size 40   # fewer clusters
+Every run prints a **Silhouette Score** after clustering:
 ```
-
-**Quality metric:** Every run prints a **Silhouette Score** (0–1). Above 0.5 is good; 0.25–0.5 is reasonable; below 0.25 suggests clusters overlap or the parameter needs tuning.
-
-**Output file columns** (same as Matlab's `Cluster_detail_results.csv`):
-
-| Column | Description |
-|---|---|
-| `ClusterIdx` | Cluster number (1-based). 0 = noise/unassigned (HDBSCAN only). |
-| `Timestamp` | Harp timestamp of the window's midpoint (seconds) |
-| `Folder_Name` | Session label this window came from |
+Silhouette Score: 0.3261  (reasonable)
+Interpretation  : >0.5 good  |  0.25–0.5 reasonable  |  <0.25 poor
+```
 
 ---
 
 ### Step 3 — Compare against Matlab results (optional)
 
-Requires a `.mat` file produced by the original Matlab pipeline.
-
 ```bash
 .venv/bin/python3 scripts/compare_results.py \
     --matlab       path/to/matlab_output.mat \
-    --python       test_outputs/my_results.csv \
-    --python-label "Affinity Propagation"
+    --python       path/to/Cluster_detail_results.csv \
+    --python-label "AP sampled"
 ```
-
-| Argument | Default | Description |
-|---|---|---|
-| `--matlab` | *(required)* | Path to Matlab `.mat` output file |
-| `--python` | *(required)* | Path to Python `Cluster_detail_results.csv` |
-| `--python-label` | `HDBSCAN + FAISS ANN` | Label shown in output (e.g. `"Affinity Propagation"`) |
-| `--matlab-key` | `Clusters` | Struct key inside `.mat` file |
-| `--matlab-field` | `idx` | Field that holds per-window labels |
-
-Prints cluster count, size distribution, and agreement metrics (ARI, NMI) side by side.
 
 ---
 
-### Batch run on all datasets (optional)
+### Batch run on all datasets
 
-Runs the pipeline on every dataset under `lab_data/` and writes results to `results/`.
-Generates `summary_report.txt` (human-readable) and `summary_metrics.csv` (machine-readable)
-with per-dataset timing, cluster count, noise percentage, and Silhouette Score.
+Runs the pipeline on every dataset and writes results + a summary report:
 
 ```bash
 .venv/bin/python3 scripts/batch_run.py
 ```
 
-Edit the `DATASETS` list at the top of `batch_run.py` to point to your own recordings.
+### Compare all three methods
+
+Runs HDBSCAN, AP full, and AP sampled on every dataset and saves a side-by-side comparison:
+
+```bash
+.venv/bin/python3 scripts/batch_compare.py
+```
+
+AP full is automatically skipped for datasets where N > 15,000 (memory/time constraint).  
+Results are saved to `results/method_comparison_report.txt` and `results/method_comparison.csv`.
 
 ---
 
 ### One-command benchmark (optional)
-
-Runs both HDBSCAN and AP on the test data and prints a full performance table.  
-Pass `--matlab` to include Matlab comparison; omit it to show estimates only.
 
 ```bash
 # Without Matlab file (estimates only)
@@ -188,130 +177,89 @@ Pass `--matlab` to include Matlab comparison; omit it to show estimates only.
 
 ## What Changed vs. the Original Matlab Pipeline
 
-The signal processing and feature extraction steps are **identical** to Matlab.  
-The changes are in the three bottleneck steps that made the Matlab pipeline infeasible for large recordings.
+Signal processing and feature extraction are **identical** to Matlab.  
+The changes are in the three bottleneck steps.
 
-### 1. Feature extraction — vectorized (was: growing loop)
+### 1. Feature extraction — vectorized
 
-**Matlab (`runBuildMatrix.m`):**
-```matlab
-for kk = 1:N_windows
-    tmp = [];
-    for i = 1:N_channels
-        tempHist = histc(...)
-        tmp = [tmp tempHist]   % copies the whole matrix on every iteration
-    end
-    newWin(kk,:) = tmp;
-end
-```
-`totalMatrix = [totalMatrix histMatrix]` inside a loop copies the entire matrix on every iteration — N × C full copies in total.
+**Matlab:** `totalMatrix = [totalMatrix histMatrix]` inside a loop → O(N²) memory copies.  
+**Python:** pre-allocate once, fill with `np.add.at` → O(N) memory.
 
-**Python (`extract_histogram_features`):**
-```python
-hist_matrix = np.zeros((N_windows, total_bins))   # allocate once
-np.add.at(hist_matrix, (row_idx, bin_idx), 1.0)   # fill all windows at once
-```
-Pre-allocates the full matrix once, then fills all windows simultaneously with vectorized indexing. No copies, no Python loops over windows.
+### 2. Distance calculation — analytic formula
 
----
-
-### 2. Distance calculation — analytic formula (was: EMD solver called N² times)
-
-**Matlab (`runDistanceSim.m` option 2):**
-```matlab
-for pp = 1:N
-    for qq = 1:pp
-        Dsim(pp,qq) = -(emd(hist_pp, hist_qq, boundaries).^2)
-    end
-end
-```
-Calls the `emd()` MEX solver for every pair of windows. For N = 120,000 windows this is **7.5 billion calls** (~83 days).
-
-**Python (`build_sparse_similarity`):**
-```python
-cdf = np.cumsum(histogram, axis=1)          # CDF of each histogram, O(N·d)
-distances, neighbors = faiss_index.search(cdf, K=100)   # K-NN search
-```
-For a 1D normalized histogram, the Wasserstein-1 distance (= EMD) has a closed-form solution:
+**Matlab:** calls `emd()` MEX solver N² times (~83 days for N=120,000).  
+**Python:** CDF-L1 = W₁ closed-form solution + FAISS K-NN search.
 
 ```
 W₁(p, q) = Σ |CDF_p(k) − CDF_q(k)|
 ```
 
-Computing the CDF once and taking the L1 distance is O(d) per pair — no solver needed.  
-FAISS then finds the K=100 nearest neighbors per window without computing all N² pairs.
-
 | | Matlab | Python |
 |---|---|---|
-| Distance calls | N² (full matrix) | N × K (sparse) |
-| Memory | N² × 8 bytes = **109 GB** at N=120,000 | N × K × 8 bytes = **96 MB** at N=120,000 |
-| Time (N=120,000) | ~83 days | ~2 minutes |
+| Memory at N=120,000 | **109 GB** | **96 MB** |
+| Time at N=120,000 | ~83 days | ~2 minutes |
+
+### 3. Clustering — three options
+
+| Method | Flag | When to use | Time at N=120,000 |
+|---|---|---|---|
+| HDBSCAN | *(default)* | Large data, cluster quality | ~5–15 min |
+| AP sampled | `--use-ap-sampled` | Large data, cross-session comparison | ~2–5 min |
+| AP full | `--use-ap` | Small data (N < 10,000), Matlab comparison | ~seconds |
 
 ---
 
-### 3. Clustering — HDBSCAN / AP options (was: AP only, O(N²) per iteration)
+## Lab Dataset Results
 
-**Matlab (`apclusterSparse.m`):**  
-Affinity Propagation runs up to 1,000 iterations. Each iteration updates messages for all N points — O(N²) per iteration, O(N² × 1,000) total. For N = 120,000 this takes an estimated **167 days**.
+Results from running all three methods on the available lab recordings:
 
-**Python — two options:**
+| Dataset | N | HDBSCAN clusters | HDBSCAN sil | AP sampled clusters | AP sampled sil |
+|---|---|---|---|---|---|
+| short_comparison_test | 1,195 | 23 | 0.10 | 7 | 0.18 |
+| comparison_test | 13,799 | 3 | **0.50** | 22 | 0.17 |
+| control_mouse_1_jul | 23,902 | 2 | 0.23 | 18 | 0.16 |
+| control_mouse_1_oct | 23,906 | 4 | **0.46** | 23 | 0.19 |
+| mp_mouse_1_jul | 19,714 | 11 | **0.33** | 21 | 0.22 |
+| mp_mouse_1_oct | 23,866 | 8 | 0.07 | 22 | 0.22 |
+| moving_test | 47,028 | 42 | 0.05 | 22 | **0.28** |
+| still_test | 23,877 | 2 | **0.52** | 19 | 0.19 |
 
-| Mode | Flag | When to use | Time at N=120,000 |
-|---|---|---|---|
-| Affinity Propagation | `--use-ap` | N < 10,000 windows, best match to Matlab results | ~hours (still O(N²)) |
-| UMAP + HDBSCAN | *(default)* | N > 10,000 windows | ~5–15 minutes |
-
-UMAP reduces the 396-dimensional feature space to 15 dimensions before HDBSCAN runs, solving the curse-of-dimensionality problem that causes HDBSCAN to fail on raw histogram features.
+Full results and timing in `results/method_comparison_report.txt`.
 
 ---
 
 ## Processing Pipeline Overview
 
 ```
-Raw Harp CSV (harp_data_cut.csv)
+Raw Harp CSV (Harp-Motion.csv)
         │
-        ▼  prepare_test_data.py  (if not from stitched.py)
+        ▼  prepare_test_data.py
+        │   Detect missing packets (Counter column)
+        │   Discard windows with >10% NaN
+        │   Interpolate remaining NaN
+        │
 combined_harp_data_cleaned.csv
         │
         ▼  Step 1: load_cleaned_motion()
         │   Filter RegisterAddress == 34 rows
-        │   71,760 rows × 10 columns  (AccXYZ, GyroXYZ, MagXYZ, counter)
         │
         ▼  Step 2: process_motion()          ← identical to processData.m
         │   Scale to physical units (g, dps)
-        │   Median filter kernel=7 (spike removal)
-        │   Butterworth high-pass 0.5 Hz (gravity separation)
+        │   Median filter kernel=7
+        │   Butterworth high-pass 0.5 Hz
         │   → 4 channels: y_GA, z, z_gyro, log(tot_accel)
         │
-        ▼  Step 3: extract_histogram_features()  ← identical to runBuildMatrix.m
-        │   Slice into 60-sample (300 ms) windows
+        ▼  Step 3: extract_histogram_features()
+        │   Slice into 60-sample (300ms) windows
         │   Histogram each channel into 99 bins
         │   → feature matrix: N_windows × 396
         │
-        ▼  Step 4: build_sparse_similarity()     ← replaces runDistanceSim.m
-        │   CDF transform per channel
-        │   FAISS K-NN search (L1 metric)
-        │   → sparse similarity matrix: N × K triplets
+        ▼  Step 4: build_sparse_similarity()
+        │   CDF transform, FAISS K-NN search
         │
-        ▼  Step 5: cluster_ap_sparse() or cluster_hdbscan()
-        │   AP  → same algorithm as Matlab, feasible for N < 10,000
-        │   HDBSCAN → UMAP 396-D→15-D, then density clustering
+        ▼  Step 5: cluster_hdbscan() / cluster_ap_sparse() / cluster_ap_sampled()
         │
         ▼
 Cluster_detail_results.csv
         ClusterIdx | Timestamp | Folder_Name
 ```
-
----
-
-## Test Data
-
-The `test_outputs/` folder contains results from a 6-minute test recording (1,196 behavioral windows):
-
-| File | Description |
-|---|---|
-| `combined_harp_data_cleaned.csv` | Pipeline-ready input (output of stitched.py) |
-| `inspect_stage1_raw.csv` | Raw ADC values from the sensor (71,760 rows) |
-| `inspect_stage2_processed.csv` | Signals in physical units after filtering |
-| `inspect_stage3_features.csv` | Histogram feature matrix (1,196 rows × 396 features) |
-| `python_ap_results.csv` | AP clustering result: 7 clusters |
