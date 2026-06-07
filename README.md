@@ -5,9 +5,6 @@ Processes IMU sensor data from mice, segments movement into behavioral windows, 
 
 The output format is identical to the original Matlab pipeline, so all existing visualization notebooks still work.
 
-> **Ongoing discussion:** [Clustering Feature Representation: Limitations and Potential Improvements](clustering_representation_limitations_and_improvements.md)  
-> Analysis of current histogram representation limitations and proposed next steps for Parkinson's disease progression analysis.
-
 ---
 
 ## Folder Structure
