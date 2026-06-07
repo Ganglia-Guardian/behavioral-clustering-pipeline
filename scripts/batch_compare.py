@@ -107,7 +107,7 @@ DATASETS = [
 ]
 
 AP_SAMPLE_SIZE = 6_000   # windows used for AP sampled
-AP_FULL_MAX_N  = 15_000  # only run AP full when N <= this (memory/time limit)
+AP_FULL_MAX_N  = 20_000  # only run AP full when N <= this (~3×N²×8 bytes needed for AP internals)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -173,22 +173,25 @@ def load_data(cfg: dict, out_dir: Path) -> tuple:
 # ── Run one method ────────────────────────────────────────────────────────────
 
 def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
-               ts, folders) -> dict:
+               ts, folders, preference: float = None) -> dict:
     """Run one clustering method, save CSV, return metrics dict."""
     import io, contextlib
     buf = io.StringIO()
     N   = hist.shape[0]
 
+    _timing = {}
     t0 = time.perf_counter()
     try:
         with contextlib.redirect_stdout(buf):
             if method == "hdbscan":
-                labels = cluster_hdbscan(hist, channel_sizes, min_cluster_size=mcs)
+                labels = cluster_hdbscan(hist, channel_sizes, min_cluster_size=mcs,
+                                         _timing=_timing)
             elif method == "ap_full":
-                labels = cluster_ap_sparse(hist, channel_sizes)
+                labels = cluster_ap_sparse(hist, channel_sizes, _timing=_timing)
             elif method == "ap_sampled":
                 labels = cluster_ap_sampled(hist, channel_sizes,
-                                             sample_size=AP_SAMPLE_SIZE)
+                                             sample_size=AP_SAMPLE_SIZE, _timing=_timing,
+                                             preference=preference)
             else:
                 raise ValueError(f"Unknown method: {method}")
 
@@ -209,7 +212,11 @@ def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
             "std":        round(stats["std"], 1),
             "min":        stats["min"],
             "max":        stats["max"],
+            "t_dist":     _timing.get("t_dist", float("nan")),
+            "t_algo":     _timing.get("t_algo", float("nan")),
             "t_s":        round(elapsed, 2),
+            "preference": _timing.get("preference", None),
+            "labels":     labels,
         }
     except MemoryError:
         elapsed = time.perf_counter() - t0
@@ -234,59 +241,127 @@ def print_result(m: dict) -> None:
     sil_str = f"{sil:.4f}" if not np.isnan(sil) else "N/A"
     quality = ("good" if sil > 0.5 else
                "reasonable" if sil > 0.25 else "poor") if not np.isnan(sil) else "N/A"
+    t_dist = m.get("t_dist", float("nan"))
+    t_algo = m.get("t_algo", float("nan"))
+    t_dist_str = f"{t_dist:.1f}s" if not np.isnan(t_dist) else "—"
+    t_algo_str = f"{t_algo:.1f}s" if not np.isnan(t_algo) else "—"
     print(f"    {m['method']:<14}  clusters={m['n_clusters']:>3}  "
-          f"noise={m['noise_pct']:.1f}%  "
-          f"sil={sil_str} ({quality})  "
-          f"time={m['t_s']:.1f}s")
+          f"noise={m['noise_pct']:.1f}%  sil={sil_str} ({quality})  "
+          f"dist={t_dist_str}  algo={t_algo_str}  total={m['t_s']:.1f}s")
+
+
+# ── RI / ARI vs AP full ───────────────────────────────────────────────────────
+
+def _compute_rand_indices(dataset_results: list) -> None:
+    """Compute RI and ARI vs AP full for each method. Modifies dicts in-place."""
+    from sklearn.metrics import adjusted_rand_score
+    try:
+        from sklearn.metrics import rand_score
+    except ImportError:
+        rand_score = None
+
+    ref = next((m for m in dataset_results
+                if m["method"] == "ap_full" and m.get("status") == "ok"), None)
+
+    for m in dataset_results:
+        if m["method"] == "ap_full" or m.get("status") != "ok" or ref is None:
+            m.setdefault("ri", float("nan"))
+            m.setdefault("ari", float("nan"))
+            m.setdefault("ri_n_excluded", 0)
+            continue
+
+        ref_labels  = np.array(ref["labels"])
+        pred_labels = np.array(m["labels"])
+
+        valid      = pred_labels >= 0          # exclude HDBSCAN noise points
+        n_excluded = int((~valid).sum())
+
+        if valid.sum() < 2 or len(set(pred_labels[valid])) < 2:
+            m["ri"] = m["ari"] = float("nan")
+            m["ri_n_excluded"] = n_excluded
+            continue
+
+        ref_v, pred_v = ref_labels[valid], pred_labels[valid]
+        m["ari"]          = round(float(adjusted_rand_score(ref_v, pred_v)), 4)
+        m["ri"]           = round(float(rand_score(ref_v, pred_v)), 4) if rand_score else float("nan")
+        m["ri_n_excluded"] = n_excluded
 
 
 # ── Summary report ────────────────────────────────────────────────────────────
 
 def write_comparison_report(all_rows: list, out_path: Path) -> None:
     lines = []
-    lines.append("=" * 72)
+    lines.append("=" * 89)
     lines.append("  Method Comparison Report")
     lines.append(f"  Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
-    lines.append("=" * 72)
+    lines.append("=" * 89)
     lines.append(f"  Methods: HDBSCAN  |  AP full  |  AP sampled (n={AP_SAMPLE_SIZE:,})")
     lines.append(f"  Silhouette: >0.5 good | 0.25–0.5 reasonable | <0.25 poor")
+    lines.append(f"  T_dist : HDBSCAN=UMAP  |  AP full=N×N cdist  |  AP sampled=sample cdist")
+    lines.append(f"  T_algo : HDBSCAN=HDBSCAN fit  |  AP full=AP iterations  |  AP sampled=AP+FAISS")
 
     datasets = sorted(set(r["dataset"] for r in all_rows))
     methods  = ["hdbscan", "ap_full", "ap_sampled"]
 
     for ds in datasets:
         lines.append("")
-        lines.append("─" * 72)
-        lines.append(f"  {ds}")
-        lines.append("─" * 72)
+        lines.append("─" * 89)
         rows = {r["method"]: r for r in all_rows if r["dataset"] == ds}
+        n_windows = next((r["n_windows"] for r in rows.values() if r.get("n_windows")), "?")
+        n_str = f"{n_windows:,}" if isinstance(n_windows, int) else str(n_windows)
+        lines.append(f"  {ds}  (N = {n_str} windows)")
+        lines.append("─" * 89)
 
-        cols  = ["Method", "Clusters", "Noise%", "Silhouette", "Quality", "Time(s)"]
-        col_w = [16, 10, 8, 12, 12, 9]
+        cols  = ["Method", "Clusters", "Noise%", "Silhouette", "Quality", "T_dist(s)", "T_algo(s)", "Total(s)"]
+        col_w = [16, 10, 8, 12, 12, 11, 11, 9]
         lines.append("  " + "".join(c.ljust(w) for c, w in zip(cols, col_w)))
         lines.append("  " + "-" * sum(col_w))
 
         for method in methods:
             m = rows.get(method, {"method": method, "status": "not_run"})
             if m.get("status") == "skipped":
-                row = [method, "—", "—", "—", "skipped (N too large)", "—"]
+                row = [method, "—", "—", "—", "skipped (N too large)", "—", "—", "—"]
             elif m.get("status") != "ok":
-                row = [method, "—", "—", "—", m.get("status","—"), "—"]
+                row = [method, "—", "—", "—", m.get("status","—"), "—", "—", "—"]
             else:
                 sil = m.get("sil", float("nan"))
                 sil_str = f"{sil:.4f}" if not np.isnan(sil) else "N/A"
                 quality = ("good" if sil > 0.5 else
                            "reasonable" if sil > 0.25 else
                            "poor") if not np.isnan(sil) else "N/A"
+                t_dist = m.get("t_dist", float("nan"))
+                t_algo = m.get("t_algo", float("nan"))
                 row = [method,
                        str(m["n_clusters"]),
                        f"{m['noise_pct']:.1f}%",
                        sil_str, quality,
+                       f"{t_dist:.2f}" if not np.isnan(t_dist) else "—",
+                       f"{t_algo:.2f}" if not np.isnan(t_algo) else "—",
                        str(m["t_s"])]
             lines.append("  " + "".join(str(v).ljust(w) for v, w in zip(row, col_w)))
 
+        # RI / ARI section
+        ref_m = rows.get("ap_full", {})
+        if ref_m.get("status") == "ok":
+            lines.append("")
+            lines.append("  vs AP full (Matlab reference):")
+            for cmp in ["hdbscan", "ap_sampled"]:
+                cm = rows.get(cmp, {})
+                if cm.get("status") != "ok":
+                    continue
+                ri   = cm.get("ri",  float("nan"))
+                ari  = cm.get("ari", float("nan"))
+                excl = cm.get("ri_n_excluded", 0)
+                ri_str  = f"{ri:.4f}"  if not np.isnan(ri)  else "N/A"
+                ari_str = f"{ari:.4f}" if not np.isnan(ari) else "N/A"
+                note = f"  (excl. {excl:,} noise pts)" if excl > 0 else ""
+                lines.append(f"    {cmp:<14}  RI={ri_str}  ARI={ari_str}{note}")
+        else:
+            lines.append("")
+            lines.append("  vs AP full: skipped (AP full did not run on this dataset)")
+
     lines.append("")
-    lines.append("=" * 72)
+    lines.append("=" * 89)
     out_path.write_text("\n".join(lines))
     print("\n".join(lines))
 
@@ -315,6 +390,8 @@ def main():
             print(f"  ERROR loading data: {e}")
             continue
 
+        dataset_results = []
+        ap_full_preference = None
         for method in methods:
             out_csv = out_dir / f"Cluster_detail_results_{method}.csv"
 
@@ -323,7 +400,7 @@ def main():
                 print(f"\n  → {method}  SKIPPED  "
                       f"(N={N:,} > AP_FULL_MAX_N={AP_FULL_MAX_N:,}, "
                       f"would need {N**2*8/1e9:.1f} GB)")
-                all_rows.append({
+                dataset_results.append({
                     "dataset": cfg["name"], "method": method,
                     "status": "skipped", "n_windows": N,
                     "note": f"N={N:,} exceeds AP_FULL_MAX_N={AP_FULL_MAX_N:,}",
@@ -331,11 +408,36 @@ def main():
                 continue
 
             print(f"\n  → {method} ...")
+            pref = ap_full_preference if (method == "ap_sampled" and ap_full_preference is not None) else None
+            if pref is not None:
+                print(f"      (preference aligned to AP full: {pref:.4f})")
             m = run_method(method, hist, cdf, channel_sizes,
-                           cfg["mcs"], out_csv, ts, folders)
+                           cfg["mcs"], out_csv, ts, folders, preference=pref)
             m["dataset"] = cfg["name"]
-            all_rows.append(m)
+            if method == "ap_full" and m.get("status") == "ok":
+                ap_full_preference = m.get("preference")
+            dataset_results.append(m)
             print_result(m)
+
+        # Compute RI / ARI vs AP full (Matlab reference)
+        _compute_rand_indices(dataset_results)
+        if any(m["method"] == "ap_full" and m.get("status") == "ok"
+               for m in dataset_results):
+            print("\n  Agreement with AP full (Matlab reference):")
+            for m in dataset_results:
+                if m["method"] == "ap_full" or m.get("status") != "ok":
+                    continue
+                ri  = m.get("ri",  float("nan"))
+                ari = m.get("ari", float("nan"))
+                excl = m.get("ri_n_excluded", 0)
+                ri_str  = f"{ri:.4f}"  if not np.isnan(ri)  else "N/A"
+                ari_str = f"{ari:.4f}" if not np.isnan(ari) else "N/A"
+                note = f"  (excl. {excl:,} noise pts)" if excl > 0 else ""
+                print(f"    {m['method']:<14}  RI={ri_str}  ARI={ari_str}{note}")
+
+        for m in dataset_results:
+            m.pop("labels", None)
+        all_rows.extend(dataset_results)
 
     # ── Save comparison CSV ───────────────────────────────────────────────────
     csv_rows = []
@@ -351,7 +453,11 @@ def main():
             "cluster_mean": r.get("mean", ""),
             "cluster_min":  r.get("min", ""),
             "cluster_max":  r.get("max", ""),
+            "t_dist_s":   r.get("t_dist", ""),
+            "t_algo_s":   r.get("t_algo", ""),
             "t_s":        r.get("t_s", ""),
+            "ri_vs_ap_full":  r.get("ri",  ""),
+            "ari_vs_ap_full": r.get("ari", ""),
         })
     pd.DataFrame(csv_rows).to_csv(
         RESULTS_DIR / "method_comparison.csv", index=False)

@@ -5,6 +5,9 @@ Processes IMU sensor data from mice, segments movement into behavioral windows, 
 
 The output format is identical to the original Matlab pipeline, so all existing visualization notebooks still work.
 
+> **Ongoing discussion:** [Clustering Feature Representation: Limitations and Potential Improvements](clustering_representation_limitations_and_improvements.md)  
+> Analysis of current histogram representation limitations and proposed next steps for Parkinson's disease progression analysis.
+
 ---
 
 ## Folder Structure
@@ -158,7 +161,7 @@ Runs HDBSCAN, AP full, and AP sampled on every dataset and saves a side-by-side 
 .venv/bin/python3 scripts/batch_compare.py
 ```
 
-AP full is automatically skipped for datasets where N > 15,000 (memory/time constraint).  
+AP full is automatically skipped for datasets where N > 20,000 (memory constraint: AP internals require ~3×N²×8 bytes).  
 Results are saved to `results/method_comparison_report.txt` and `results/method_comparison.csv`.
 
 ---
@@ -211,20 +214,37 @@ W₁(p, q) = Σ |CDF_p(k) − CDF_q(k)|
 
 ## Lab Dataset Results
 
-Results from running all three methods on the available lab recordings:
+Results from running all three methods on all available lab recordings.  
+AP full is run as a Matlab-equivalent reference; it is skipped when N > 20,000 due to memory constraints (~3×N²×8 bytes for AP internals).
 
-| Dataset | N | HDBSCAN clusters | HDBSCAN sil | AP sampled clusters | AP sampled sil |
-|---|---|---|---|---|---|
-| short_comparison_test | 1,195 | 23 | 0.10 | 7 | 0.18 |
-| comparison_test | 13,799 | 3 | **0.50** | 22 | 0.17 |
-| control_mouse_1_jul | 23,902 | 2 | 0.23 | 18 | 0.16 |
-| control_mouse_1_oct | 23,906 | 4 | **0.46** | 23 | 0.19 |
-| mp_mouse_1_jul | 19,714 | 11 | **0.33** | 21 | 0.22 |
-| mp_mouse_1_oct | 23,866 | 8 | 0.07 | 22 | 0.22 |
-| moving_test | 47,028 | 42 | 0.05 | 22 | **0.28** |
-| still_test | 23,877 | 2 | **0.52** | 19 | 0.19 |
+### Cluster counts and Silhouette scores
 
-Full results and timing in `results/method_comparison_report.txt`.
+| Dataset | N | HDBSCAN k | HDBSCAN sil | AP full k | AP full sil | AP sampled k | AP sampled sil |
+|---|---|---|---|---|---|---|---|
+| short_comparison_test | 1,195 | 23 | 0.10 | 7 | 0.18 | 7 | 0.18 |
+| comparison_test | 13,799 | 3 | **0.50** | 36 | 0.16 | 22 | 0.18 |
+| mp_mouse_1_jul | 19,714 | 11 | **0.33** | 40 | 0.20 | 18 | 0.22 |
+| control_mouse_1_jul | 23,902 | 2 | 0.23 | — | — | 18 | 0.16 |
+| control_mouse_1_oct | 23,906 | 4 | **0.46** | — | — | 23 | 0.19 |
+| mp_mouse_1_oct | 23,866 | 8 | 0.07 | — | — | 22 | 0.22 |
+| still_test | 23,877 | 2 | **0.52** | — | — | 19 | 0.19 |
+| moving_test | 47,028 | 42 | 0.05 | — | — | 22 | **0.28** |
+
+### Agreement with AP full (Matlab reference)
+
+Rand Index (RI) and Adjusted Rand Index (ARI) measure how closely each method's clustering agrees with AP full.  
+ARI = 1.0 means perfect agreement; ARI ≈ 0 means no better than chance.  
+HDBSCAN noise points (label = −1) are excluded from RI/ARI calculation.
+
+| Dataset | HDBSCAN RI | HDBSCAN ARI | AP sampled RI | AP sampled ARI |
+|---|---|---|---|---|
+| short_comparison_test | 0.866 | 0.329 | **1.000** | **1.000** |
+| comparison_test | 0.065 | 0.002 | 0.945 | 0.392 |
+| mp_mouse_1_jul | 0.221 | 0.012 | 0.937 | 0.360 |
+
+Datasets with N > 20,000 do not have RI/ARI because AP full was skipped.
+
+Full results with timing (T_dist / T_algo / Total) in `results/method_comparison_report.txt`.
 
 ---
 

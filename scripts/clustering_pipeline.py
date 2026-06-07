@@ -337,7 +337,8 @@ def _build_cdf_features(hist_matrix: np.ndarray, channel_sizes: list) -> np.ndar
 def cluster_hdbscan(hist_matrix: np.ndarray,
                     channel_sizes: list,
                     min_cluster_size: int = 15,
-                    n_neighbors: int = None) -> np.ndarray:
+                    n_neighbors: int = None,
+                    _timing: dict = None) -> np.ndarray:
     """
     Cluster behavioral windows with UMAP → HDBSCAN.
 
@@ -406,7 +407,8 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
         low_memory   = N > 50_000,
     )
     embedding = reducer.fit_transform(cdf_features)
-    print(f"      UMAP done in {time.time() - t0:.1f}s")
+    t_umap = time.time() - t0
+    print(f"      UMAP done in {t_umap:.1f}s")
 
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size         = min_cluster_size,
@@ -415,12 +417,16 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
         cluster_selection_method = "eom",
     )
     labels = clusterer.fit_predict(embedding)
+    t_hdbscan = time.time() - t0 - t_umap
 
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise    = (labels == -1).sum()
     print(f"      Total time: {time.time() - t0:.1f}s")
     print(f"      Clusters found : {n_clusters}")
     print(f"      Noise points   : {n_noise:,} ({100 * n_noise / len(labels):.1f}%)")
+    if _timing is not None:
+        _timing['t_dist'] = round(t_umap, 2)
+        _timing['t_algo'] = round(t_hdbscan, 2)
     return labels
 
 
@@ -431,7 +437,8 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
 def cluster_ap_sparse(hist_matrix: np.ndarray,
                       channel_sizes: list,
                       K: int = 100,
-                      preference: float = None) -> np.ndarray:
+                      preference: float = None,
+                      _timing: dict = None) -> np.ndarray:
     """
     Run Affinity Propagation on a CDF-L1 similarity matrix.
 
@@ -475,6 +482,7 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
     print(f"      Building full {N}×{N} similarity matrix via scipy.cdist ...")
     dist     = ssd.cdist(cdf_features, cdf_features, metric="cityblock").astype(np.float64)
     affinity = -(dist ** 2)
+    t_dist = time.time() - t0
 
     if preference is None:
         preference = float(affinity.min())
@@ -495,8 +503,13 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
         random_state     = 0,
     )
     labels = ap.fit_predict(affinity)
+    t_algo = time.time() - t0 - t_dist
 
     print(f"      AP done in {time.time() - t0:.1f}s  |  clusters: {len(set(labels))}")
+    if _timing is not None:
+        _timing['t_dist']     = round(t_dist, 2)
+        _timing['t_algo']     = round(t_algo, 2)
+        _timing['preference'] = preference
     return labels
 
 
@@ -507,7 +520,8 @@ def cluster_ap_sparse(hist_matrix: np.ndarray,
 def cluster_ap_sampled(hist_matrix: np.ndarray,
                        channel_sizes: list,
                        sample_size: int = 6000,
-                       preference: float = None) -> np.ndarray:
+                       preference: float = None,
+                       _timing: dict = None) -> np.ndarray:
     """
     Affinity Propagation on a random subset, then assign all windows to the
     nearest exemplar.  Scales AP to arbitrarily large N.
@@ -558,8 +572,10 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
     # ── AP on sample ──────────────────────────────────────────────────────────
     print(f"      Building {sample_size}×{sample_size} affinity matrix "
           f"({sample_size**2*8/1e6:.0f} MB) ...")
+    t_dist_start = time.time()
     dist     = ssd.cdist(cdf_sample, cdf_sample, metric="cityblock").astype(np.float64)
     affinity = -(dist ** 2)
+    t_dist = time.time() - t_dist_start
 
     if preference is None:
         preference = float(affinity.min())
@@ -593,7 +609,11 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
     _, assignments = index.search(cdf_all.astype(np.float32), 1)
     labels = assignments.ravel().astype(int)
 
-    print(f"      Total time: {time.time()-t0:.1f}s  |  Clusters: {n_clusters}")
+    t_algo = time.time() - t0
+    print(f"      Total time: {t_dist + t_algo:.1f}s  |  Clusters: {n_clusters}")
+    if _timing is not None:
+        _timing['t_dist'] = round(t_dist, 2)
+        _timing['t_algo'] = round(t_algo, 2)
     return labels
 
 
