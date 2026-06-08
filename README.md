@@ -67,13 +67,22 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
     --output path/to/Cluster_detail_results.csv
 
 # AP full (closest to Matlab; N ≤ 20,000 only)
-... --use-ap
+.venv/bin/python3 scripts/clustering_pipeline.py \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv \
+    --use-ap
 
 # AP sampled
-... --use-ap-sampled
+.venv/bin/python3 scripts/clustering_pipeline.py \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv \
+    --use-ap-sampled
 
 # Sparse AP
-... --use-ap-sparse
+.venv/bin/python3 scripts/clustering_pipeline.py \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv \
+    --use-ap-sparse
 ```
 
 **Method guide:**
