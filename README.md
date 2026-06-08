@@ -1,64 +1,53 @@
 # Python Clustering Pipeline
 
-Python replacement for the Matlab behavioral clustering pipeline (`VPAPPAxes.m`).  
-Processes IMU sensor data from mice, segments movement into behavioral windows, and clusters them into behavioral motifs.
+Python implementation of the Matlab behavioral clustering pipeline (`VPAPPAxes.m`).  
+Processes IMU sensor data from mice, segments movement into 300 ms windows, and clusters them into behavioral motifs.
 
-The output format is identical to the original Matlab pipeline, so all existing visualization notebooks still work.
+Output format matches the original Matlab pipeline — all existing visualization notebooks still work.
 
 ---
 
 ## Folder Structure
 
 ```
-Python_Pipeline/          ← repo root
-├── README.md
-├── requirements.txt
-├── .gitignore
+Python_Pipeline/
 ├── scripts/
-│   ├── clustering_pipeline.py   # Main pipeline (replacement for VPAPPAxes.m)
-│   ├── batch_run.py             # Batch runner: processes all datasets, generates summary report
-│   ├── batch_compare.py         # Compares all four clustering methods side by side
-│   ├── run_ap_full_all.py       # Runs AP full on each dataset individually and saves results
-│   ├── prepare_test_data.py     # Converts raw Harp CSV to pipeline-ready format
-│   ├── compare_results.py       # Compares Python output against Matlab baseline
-│   └── run_benchmark.py         # Benchmark: timing and memory comparison
+│   ├── clustering_pipeline.py   # Main pipeline
+│   ├── batch_run.py             # Run all datasets, generate summary report
+│   ├── batch_compare.py         # Compare all methods side by side
+│   ├── prepare_test_data.py     # Convert raw Harp CSV to pipeline-ready format
+│   └── compare_results.py       # Compare Python output against Matlab baseline
 ├── test_outputs/
-│   ├── combined_harp_data_cleaned.csv   # Preprocessed input (pipeline-ready format)
-│   ├── inspect_stage1_raw.csv           # Raw sensor values (10 columns: ax ay az gx gy gz mx my mz counter)
-│   ├── inspect_stage2_processed.csv     # Physical-unit signals after filtering (y_GA, z, z_gyro, tot_accel)
-│   ├── inspect_stage3_features.csv      # Histogram feature matrix (N_windows × 30)
-│   └── python_ap_results.csv            # AP clustering output (test data)
+│   ├── combined_harp_data_cleaned.csv   # Preprocessed input
+│   ├── inspect_stage1_raw.csv           # Raw sensor values
+│   ├── inspect_stage2_processed.csv     # Filtered signals (y_GA, z, z_gyro, tot_accel)
+│   └── inspect_stage3_features.csv      # Histogram feature matrix (N × 30)
 └── results/
-    ├── summary_report.txt               # Batch run report (timing, clusters, quality)
-    ├── summary_metrics.csv              # Machine-readable summary of all datasets
-    ├── method_comparison.csv            # Side-by-side comparison of all four methods
-    ├── method_comparison_report.txt     # Human-readable method comparison report
+    ├── method_comparison.csv            # Side-by-side method comparison
+    ├── method_comparison_report.txt     # Human-readable comparison report
     └── <dataset_name>/
-        ├── Cluster_detail_results.csv             # Default method result (HDBSCAN or AP)
-        ├── Cluster_detail_results_hdbscan.csv     # HDBSCAN results
-        ├── Cluster_detail_results_ap_full.csv     # AP full results (N ≤ 20,000 only)
-        ├── Cluster_detail_results_ap_sampled.csv  # AP sampled results
-        └── Cluster_detail_results_ap_sparse.csv   # Sparse AP results
+        ├── Cluster_detail_results_hdbscan.csv
+        ├── Cluster_detail_results_ap_full.csv
+        ├── Cluster_detail_results_ap_sampled.csv
+        └── Cluster_detail_results_ap_sparse.csv
 ```
 
 ---
 
-## Requirements
+## Setup
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-All commands below assume you are in the `Python_Pipeline/` root directory and use `.venv/bin/python3`.
+All commands below assume you are in `Python_Pipeline/` and use `.venv/bin/python3`.
 
 ---
 
 ## How to Run
 
-### Step 1 — Prepare raw data
-
-Convert a raw Harp-Motion CSV to the pipeline-ready format:
+### Prepare raw data
 
 ```bash
 .venv/bin/python3 scripts/prepare_test_data.py \
@@ -67,169 +56,108 @@ Convert a raw Harp-Motion CSV to the pipeline-ready format:
     --label  session_name
 ```
 
-This detects missing packets (Counter column, 0–127 wrapping), discards 300 ms windows with > 10% NaN, and interpolates remaining NaN sensor values.
+Skip this if you already have `combined_harp_data_cleaned.csv`.
 
-If you already have a `combined_harp_data_cleaned.csv` from `stitched.py`, skip this step.
-
----
-
-### Step 2 — Run the clustering pipeline
-
-Four methods are available:
+### Run clustering
 
 ```bash
-# HDBSCAN (default — recommended for large datasets)
+# HDBSCAN (default)
 .venv/bin/python3 scripts/clustering_pipeline.py \
     --input  path/to/combined_harp_data_cleaned.csv \
     --output path/to/Cluster_detail_results.csv
 
-# AP sampled (recommended for cross-session comparison)
-.venv/bin/python3 scripts/clustering_pipeline.py \
-    --input  path/to/combined_harp_data_cleaned.csv \
-    --output path/to/Cluster_detail_results.csv \
-    --use-ap-sampled
+# AP full (closest to Matlab; N ≤ 20,000 only)
+... --use-ap
 
-# AP full (closest to Matlab; only practical for N ≤ 20,000)
-.venv/bin/python3 scripts/clustering_pipeline.py \
-    --input  path/to/combined_harp_data_cleaned.csv \
-    --output path/to/Cluster_detail_results.csv \
-    --use-ap
+# AP sampled
+... --use-ap-sampled
 
-# Sparse AP (K-NN graph; O(N×K) memory instead of O(N²))
-.venv/bin/python3 scripts/clustering_pipeline.py \
-    --input  path/to/combined_harp_data_cleaned.csv \
-    --output path/to/Cluster_detail_results.csv \
-    --use-ap-sparse
+# Sparse AP
+... --use-ap-sparse
 ```
 
-**Method selection guide:**
+**Method guide:**
 
-| Method | When to use |
-|---|---|
-| HDBSCAN *(default)* | Any size; fastest; handles noise points |
-| AP sampled `--use-ap-sampled` | Cross-session comparison; best agreement with AP full at scale |
-| AP full `--use-ap` | N ≤ 20,000; closest to original Matlab output |
-| Sparse AP `--use-ap-sparse` | Reference/comparison; note: structurally produces more clusters than AP full (see [Known Limitations](#known-limitations)) |
+| Method | Flag | Notes |
+|---|---|---|
+| HDBSCAN | *(default)* | Fastest; handles noise points |
+| AP full | `--use-ap` | Closest to Matlab; N ≤ 20,000 only |
+| AP sampled | `--use-ap-sampled` | Best AP-compatible option for large N |
+| Sparse AP | `--use-ap-sparse` | See [Known Limitations](#known-limitations) |
 
 **Key parameters:**
 
 | Argument | Default | Description |
 |---|---|---|
-| `--arena` | `3d_wired` | Arena type: `3d_wired`, `3d_wireless`, `2d_wired`, `2d_wireless` |
-| `--min-cluster-size` | `15` | HDBSCAN only — smaller → more clusters |
-| `--n-neighbors` | auto | HDBSCAN only — UMAP n_neighbors; lower → more clusters |
-| `--sample-size` | `6000` | AP sampled only — windows passed to AP |
-| `--sparse-k` | `100` | Sparse AP only — K-NN graph degree; higher → denser graph |
-| `--preference` | auto | AP methods — controls cluster count; higher (toward 0) → more clusters |
+| `--arena` | `3d_wired` | `3d_wired`, `3d_wireless`, `2d_wired`, `2d_wireless` |
+| `--min-cluster-size` | `15` | HDBSCAN — smaller → more clusters |
+| `--sample-size` | `6000` | AP sampled — windows passed to AP |
+| `--sparse-k` | `100` | Sparse AP — K-NN graph degree |
+| `--preference` | auto | AP methods — higher (toward 0) → more clusters |
 
-Every run prints a Silhouette Score:
-```
-Silhouette Score: 0.3261  (reasonable)
-Interpretation  : >0.5 good  |  0.25–0.5 reasonable  |  <0.25 poor
-```
-
----
-
-### Step 3 — Compare against Matlab results (optional)
+### Batch runs
 
 ```bash
-.venv/bin/python3 scripts/compare_results.py \
-    --matlab       path/to/matlab_output.mat \
-    --python       path/to/Cluster_detail_results.csv \
-    --python-label "AP sampled"
+.venv/bin/python3 scripts/batch_run.py       # all datasets, summary report
+.venv/bin/python3 scripts/batch_compare.py   # all methods, side-by-side comparison
 ```
 
 ---
 
-### Batch run on all datasets
+## Pipeline Overview
 
-```bash
-# Run the pipeline on every dataset and save a summary report
-.venv/bin/python3 scripts/batch_run.py
-
-# Run all four methods and save a side-by-side comparison
-.venv/bin/python3 scripts/batch_compare.py
+```
+Raw Harp CSV
+    │
+    ▼  prepare_test_data.py
+    │   Detect missing packets (Counter 0–127 wrap)
+    │   Discard windows with > 10% NaN; interpolate remaining NaN
+    │
+    ▼  process_motion()
+    │   Scale ADC → physical units (±4 g, ±1000 dps)
+    │   Median filter (kernel=7) — spike removal
+    │   Butterworth 1st-order high-pass 0.5 Hz via filtfilt (zero-phase)
+    │   y_GA = y − y_BA  (gravity/posture),  tot_accel = √(xBA²+yBA²+zBA²)
+    │
+    ▼  extract_histogram_features()
+    │   Slice into 60-sample (300 ms) non-overlapping windows
+    │   Histogram per channel with hardHistNew.mat bin edges (30 bins total):
+    │
+    │     # 11 bins: y_GA
+    │     [-1.0, -0.7778, -0.5556, -0.3333, -0.1111, 0.1111, 0.3333, 0.5556, 0.7778, 1.0, np.inf]
+    │     # 11 bins: z
+    │     [-1.5, -1.2222, -0.9444, -0.6667, -0.3889, -0.1111, 0.1667, 0.4444, 0.7222, 1.0, np.inf]
+    │     # 6 bins: z_gyro
+    │     [-100.0, -50.0, 0.0, 50.0, 100.0, np.inf]
+    │     # 2 bins: log(totAccelBA)
+    │     [-3.0, np.inf]
+    │
+    │   Normalize each window histogram to sum = 1 → N × 30 feature matrix
+    │
+    ▼  _build_cdf_features()
+    │   cumsum per channel → L1 distance = 1D Wasserstein (EMD)
+    │
+    ▼  clustering
+    │   cluster_hdbscan()        UMAP (15-D, L1) → HDBSCAN
+    │   cluster_ap_full()        N×N affinity → AP  (preference = min)
+    │   cluster_ap_sampled()     6,000-sample → AP → FAISS assign
+    │   cluster_ap_sparse_knn()  FAISS K-NN graph → sparse AP → FAISS assign
+    │
+    ▼
+Cluster_detail_results.csv  (ClusterIdx | Timestamp | Folder_Name)
 ```
 
-AP full is automatically skipped when N > 20,000 (AP internals require ~3×N²×8 bytes).  
-Results saved to `results/method_comparison_report.txt` and `results/method_comparison.csv`.
+**AP preference** is set to `min(similarity)`, matching Matlab `AccelCluster` (`min(s(:,3))`).
 
 ---
 
-## What Changed vs. the Original Matlab Pipeline
+## Results
 
-### 1. Histogram bin configuration — corrected to match Matlab
-
-**Matlab:** `hardHistNew.mat` defines 30 bins total: 11 + 11 + 6 + 2, one set per feature channel.  
-**Old Python (incorrect):** used 99 uniform bins per channel, producing a 396-dimensional feature vector.  
-**Current Python:** uses the exact same 30-bin edges loaded from `hardHistNew.mat`, producing a 30-dimensional feature vector that matches the Matlab pipeline.
-
-```python
-# 11 bins: y_GA
-[-1.0, -0.7778, -0.5556, -0.3333, -0.1111, 0.1111, 0.3333, 0.5556, 0.7778, 1.0, np.inf]
-# 11 bins: z
-[-1.5, -1.2222, -0.9444, -0.6667, -0.3889, -0.1111, 0.1667, 0.4444, 0.7222, 1.0, np.inf]
-# 6 bins: z_gyro
-[-100.0, -50.0, 0.0, 50.0, 100.0, np.inf]
-# 2 bins: log(totAccelBA)
-[-3.0, np.inf]
-# Total: 30 bins
-```
-
-### 2. Signal processing — zero-phase filtering
-
-**Matlab (new `partition-evaluation` version):** uses `filtfilt` for zero-phase Butterworth high-pass filtering.  
-**Python:** also uses `scipy.signal.filtfilt` — matches the new Matlab version exactly.
-
-The processing chain for each IMU recording:
-
-```
-Raw ADC values  →  scale to g / dps
-                →  median filter (kernel=7)       removes spike noise
-                →  Butterworth high-pass 0.5 Hz   separates body accel (BA) from gravity (GA)
-                →  y_GA = y − y_BA                gravity component (posture)
-                →  tot_accel = √(xBA² + yBA² + zBA²)  movement magnitude
-```
-
-### 3. AP preference — min(similarity)
-
-AP preference controls how many exemplars (cluster centers) emerge.  
-**Python uses `min(similarity)`**, which matches the Matlab `AccelCluster` pipeline (`min(s(:,3))`).  
-Using `median(similarity)` — as in the newer `partition-evaluation` Matlab version — causes a cluster explosion with the 30-bin coarse feature space (similarities cluster near 0, so median ≈ 0 → every point becomes its own exemplar).
-
-### 4. Feature extraction — vectorized
-
-**Matlab:** grows `totalMatrix` inside a loop → O(N²) memory copies.  
-**Python:** pre-allocates once, fills with `np.add.at` → O(N) memory.
-
-### 5. Distance calculation — analytic formula
-
-**Matlab:** calls `emd()` MEX solver N² times.  
-**Python:** uses the closed-form 1D Wasserstein distance via CDF L1 norm:
-
-```
-W₁(p, q) = Σ |CDF_p(k) − CDF_q(k)|
-```
-
-### 6. Clustering — four scalable options
-
-| Method | Flag | Peak memory at N=24,000 | Time at N=24,000 |
-|---|---|---|---|
-| HDBSCAN | *(default)* | ~500 MB (UMAP embedding) | ~15 s |
-| AP sampled | `--use-ap-sampled` | ~288 MB (6,000² affinity) | ~20–27 s |
-| AP full | `--use-ap` | ~14 GB (N² affinity) | ~7 min (measured at N=19,714) |
-| Sparse AP | `--use-ap-sparse` | ~115 MB (N×K sparse, K=1,000) | ~40–60 s |
-
----
-
-## Lab Dataset Results
-
-AP full is used as the Matlab-equivalent reference; it is skipped when N > 20,000.  
-All results use the corrected 30-bin feature configuration from `hardHistNew.mat`, generated 2026-06-08.
+AP full is the Matlab-equivalent reference (skipped when N > 20,000).
 
 ### Cluster counts and Silhouette scores
 
-| Dataset | N | HDBSCAN k | HDBSCAN sil | AP full k | AP full sil | AP sampled k | AP sampled sil | AP sparse k | AP sparse sil |
+| Dataset | N | HDBSCAN k | sil | AP full k | sil | AP sampled k | sil | AP sparse k | sil |
 |---|---|---|---|---|---|---|---|---|---|
 | short_comparison_test | 1,195 | 3 | 0.13 | 9 | 0.17 | 9 | **0.17** | 21 | 0.14 |
 | comparison_test | 13,799 | 8 | 0.16 | 44 | 0.16 | 26 | 0.17 | 132 | 0.13 |
@@ -240,20 +168,17 @@ All results use the corrected 30-bin feature configuration from `hardHistNew.mat
 | still_test | 23,877 | 5 | 0.24 | — | — | 20 | **0.32** | 139 | 0.19 |
 | moving_test | 47,028 | 57 | 0.08 | — | — | 25 | **0.34** | 414 | 0.16 |
 
-### Agreement with AP full (Matlab reference)
+### Agreement with AP full (ARI)
 
-RI and ARI measure agreement with AP full labels. ARI = 1.0 means identical clustering; ARI ≈ 0 means no better than chance. HDBSCAN noise points (label = −1) are excluded from RI/ARI.
+ARI = 1.0 → identical; ARI ≈ 0 → no better than chance. Only available for N ≤ 20,000.
 
-| Dataset | HDBSCAN RI | HDBSCAN ARI | AP sampled RI | AP sampled ARI | AP sparse RI | AP sparse ARI |
-|---|---|---|---|---|---|---|
-| short_comparison_test | 0.2293 | 0.0209 | **1.0000** | **1.0000** | 0.8878 | 0.3734 |
-| comparison_test | 0.6400 | 0.0831 | 0.9598 | **0.4564** | 0.9729 | 0.2817 |
-| mp_mouse_1_jul | 0.6724 | 0.0824 | 0.9474 | **0.4295** | 0.9744 | 0.3742 |
+| Dataset | HDBSCAN ARI | AP sampled ARI | AP sparse ARI |
+|---|---|---|---|
+| short_comparison_test | 0.021 | **1.000** | 0.373 |
+| comparison_test | 0.083 | **0.456** | 0.282 |
+| mp_mouse_1_jul | 0.082 | **0.430** | 0.374 |
 
-Datasets with N > 20,000 have no RI/ARI (AP full was skipped).  
-Full results with timing in `results/method_comparison_report.txt`.
-
-### Timing summary
+### Timing
 
 | Dataset | N | HDBSCAN | AP full | AP sampled | AP sparse |
 |---|---|---|---|---|---|
@@ -270,60 +195,6 @@ Full results with timing in `results/method_comparison_report.txt`.
 
 ## Known Limitations
 
-### AP sparse over-clustering
+**AP sparse over-clustering:** each node only communicates with its K nearest neighbours, so distant windows never merge. This structurally produces more clusters than AP full regardless of preference — it is not a tuning issue. Use AP sampled instead for large-N datasets.
 
-Sparse AP uses a K-NN graph (default K=1,000) so each node only communicates with its K nearest neighbours. This limits global message propagation: distant windows form isolated "local echo chambers" and never merge. The result is structurally more clusters than AP full regardless of the preference setting — this is an inherent property of sparse AP on a K-NN graph, not a tuning issue.
-
-**Recommendation:** use AP sampled for large-N datasets that need AP-compatible results.
-
-### AP full memory wall
-
-AP full requires an N×N affinity matrix (~3×N²×8 bytes for AP internals). At N=24,000 this is ~14 GB. The pipeline automatically skips AP full when N > 20,000.
-
----
-
-## Processing Pipeline Overview
-
-```
-Raw Harp CSV (Harp-Motion.csv)
-        │
-        ▼  prepare_test_data.py
-        │   Detect missing packets (Counter column, wraps 0–127)
-        │   Discard 300 ms windows with > 10% NaN samples
-        │   Interpolate remaining NaN sensor values
-        │
-combined_harp_data_cleaned.csv
-        │
-        ▼  Step 1: load_cleaned_motion()
-        │   Filter rows where RegisterAddress == 34
-        │   Extract columns DataElement0–9 (ax ay az gx gy gz mx my mz counter)
-        │
-        ▼  Step 2: process_motion()          ← mirrors processData.m
-        │   Scale raw ADC → physical units (±4 g, ±1000 dps)
-        │   Median filter (kernel=7)  — spike removal
-        │   Butterworth 1st-order high-pass 0.5 Hz via filtfilt  — zero-phase
-        │   y_GA = y − y_BA                 (gravity / posture channel)
-        │   tot_accel = √(xBA² + yBA² + zBA²)  (movement magnitude)
-        │   log transform on tot_accel before binning
-        │
-        ▼  Step 3: extract_histogram_features()
-        │   Slice into 60-sample (300 ms) non-overlapping windows
-        │   Histogram each channel using hardHistNew.mat bin edges:
-        │     y_GA: 11 bins, z: 11 bins, z_gyro: 6 bins, log(tot_accel): 2 bins
-        │   Normalize each window histogram to sum = 1
-        │   → feature matrix: N_windows × 30
-        │
-        ▼  Step 4: CDF transform  (_build_cdf_features)
-        │   cumsum per channel → L1 distance = 1D Wasserstein / EMD
-        │   → CDF feature matrix: N_windows × 30
-        │
-        ▼  Step 5: clustering
-        │   cluster_hdbscan()        UMAP (15-D, L1) → HDBSCAN
-        │   cluster_ap_full()        full N×N affinity → sklearn AP
-        │   cluster_ap_sampled()     random 6,000-sample → AP → FAISS assign
-        │   cluster_ap_sparse_knn()  FAISS K-NN graph → sparse AP → FAISS assign
-        │
-        ▼
-Cluster_detail_results.csv
-        ClusterIdx | Timestamp | Folder_Name
-```
+**AP full memory:** requires an N×N affinity matrix (~14 GB at N=24,000). Automatically skipped when N > 20,000.
