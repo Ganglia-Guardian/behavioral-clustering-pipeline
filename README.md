@@ -20,7 +20,8 @@ Python_Pipeline/          ← repo root
 │   ├── batch_compare.py         # Compares all three clustering methods side by side
 │   ├── prepare_test_data.py     # Converts raw Harp CSV to pipeline-ready format
 │   ├── compare_results.py       # Compares Python output against Matlab baseline
-│   └── run_benchmark.py         # Benchmark: runs all methods and prints comparison table
+│   ├── run_benchmark.py         # Benchmark: runs all methods and prints comparison table
+│   └── run_ap_full_all.py       # Runs AP full on each dataset individually and saves results
 ├── test_outputs/
 │   ├── combined_harp_data_cleaned.csv   # Preprocessed input (pipeline-ready format)
 │   ├── inspect_stage1_raw.csv           # Raw sensor values (71,760 rows)
@@ -177,8 +178,8 @@ Results are saved to `results/method_comparison_report.txt` and `results/method_
 
 ## What Changed vs. the Original Matlab Pipeline
 
-Signal processing and feature extraction are **identical** to Matlab.  
-The changes are in the three bottleneck steps.
+Signal processing and histogram feature extraction are designed to closely mirror the original Matlab pipeline.  
+The main changes are in implementation speed, distance calculation, and scalable clustering options.
 
 ### 1. Feature extraction — vectorized
 
@@ -188,13 +189,16 @@ The changes are in the three bottleneck steps.
 ### 2. Distance calculation — analytic formula
 
 **Matlab:** calls `emd()` MEX solver N² times (~83 days for N=120,000).  
-**Python:** CDF-L1 = W₁ closed-form solution + FAISS K-NN search.
+**Python:** converts each per-channel histogram to a CDF and uses L1 distance as the 1D Wasserstein/EMD distance.
 
 ```
 W₁(p, q) = Σ |CDF_p(k) − CDF_q(k)|
 ```
 
-| | Matlab | Python |
+For AP full, Python still builds the full pairwise distance matrix.  
+For AP sampled, Python runs AP on a subset and then uses FAISS only for the final nearest-exemplar assignment.
+
+| | Matlab AP full | Python AP sampled |
 |---|---|---|
 | Memory at N=120,000 | **109 GB** | **96 MB** |
 | Time at N=120,000 | ~83 days | ~2 minutes |
@@ -220,12 +224,12 @@ AP full is run as a Matlab-equivalent reference; it is skipped when N > 20,000 d
 |---|---|---|---|---|---|---|---|
 | short_comparison_test | 1,195 | 23 | 0.10 | 7 | 0.18 | 7 | 0.18 |
 | comparison_test | 13,799 | 3 | **0.50** | 36 | 0.16 | 22 | 0.18 |
-| mp_mouse_1_jul | 19,714 | 11 | **0.33** | 40 | 0.20 | 18 | 0.22 |
 | control_mouse_1_jul | 23,902 | 2 | 0.23 | — | — | 18 | 0.16 |
 | control_mouse_1_oct | 23,906 | 4 | **0.46** | — | — | 23 | 0.19 |
+| mp_mouse_1_jul | 19,714 | 11 | **0.33** | 40 | 0.20 | 18 | 0.22 |
 | mp_mouse_1_oct | 23,866 | 8 | 0.07 | — | — | 22 | 0.22 |
-| still_test | 23,877 | 2 | **0.52** | — | — | 19 | 0.19 |
 | moving_test | 47,028 | 42 | 0.05 | — | — | 22 | **0.28** |
+| still_test | 23,877 | 2 | **0.52** | — | — | 19 | 0.19 |
 
 ### Agreement with AP full (Matlab reference)
 
@@ -260,7 +264,7 @@ combined_harp_data_cleaned.csv
         ▼  Step 1: load_cleaned_motion()
         │   Filter RegisterAddress == 34 rows
         │
-        ▼  Step 2: process_motion()          ← identical to processData.m
+        ▼  Step 2: process_motion()          ← mirrors processData.m
         │   Scale to physical units (g, dps)
         │   Median filter kernel=7
         │   Butterworth high-pass 0.5 Hz
@@ -271,12 +275,23 @@ combined_harp_data_cleaned.csv
         │   Histogram each channel into 99 bins
         │   → feature matrix: N_windows × 396
         │
-        ▼  Step 4: build_sparse_similarity()
-        │   CDF transform, FAISS K-NN search
+        ▼  Step 4: CDF transform / distance representation
+        │   Histogram CDFs make L1 distance equivalent to 1D Wasserstein/EMD
+        │   FAISS is used only by AP sampled for nearest-exemplar assignment
         │
-        ▼  Step 5: cluster_hdbscan() / cluster_ap_sparse() / cluster_ap_sampled()
+        ▼  Step 5: cluster_hdbscan() / cluster_ap_full() / cluster_ap_sampled()
         │
         ▼
 Cluster_detail_results.csv
         ClusterIdx | Timestamp | Folder_Name
 ```
+
+---
+
+## Current Assumptions and Limitations
+
+- Histogram bin edges are inherited from the Matlab pipeline and are not learned from each dataset.
+- The current 2D bin settings reuse the 3D edges and may need separate calibration.
+- Histogram features summarize value distributions but do not preserve temporal order inside a 300ms window.
+- Cross-channel relationships are weakened because each channel is histogrammed separately.
+- AP full is only practical for small datasets; use AP sampled or HDBSCAN for large recordings.
