@@ -26,7 +26,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from clustering_pipeline import (
     load_cleaned_motion, process_motion,
     extract_histogram_features, ARENA_BIN_EDGES,
-    cluster_ap_sparse, _build_cdf_features, _silhouette, WIN_SIZE,
+    cluster_ap_full, _build_cdf_features, _silhouette, WIN_SIZE,
 )
 from prepare_test_data import convert as prepare_csv
 
@@ -113,7 +113,7 @@ def run_one(cfg: dict, out_dir: Path) -> dict:
 
     _timing = {}
     t0 = time.perf_counter()
-    labels = cluster_ap_sparse(hist, ch_sizes, _timing=_timing)
+    labels = cluster_ap_full(hist, ch_sizes, _timing=_timing)
     elapsed = time.perf_counter() - t0
 
     cdf = _build_cdf_features(hist, ch_sizes)

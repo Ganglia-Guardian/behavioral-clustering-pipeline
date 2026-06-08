@@ -31,7 +31,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from clustering_pipeline import (
     load_cleaned_motion, process_motion,
     extract_histogram_features, ARENA_BIN_EDGES,
-    cluster_ap_sparse, cluster_hdbscan,
+    cluster_ap_full, cluster_hdbscan,
     _build_cdf_features, _silhouette,
     WIN_SIZE,
 )
@@ -203,7 +203,7 @@ def run_one(cfg: dict, out_dir: Path) -> dict:
     t0 = time.perf_counter()
     with contextlib.redirect_stdout(buf):
         if cfg["use_ap"]:
-            labels = cluster_ap_sparse(hist_matrix, channel_sizes,
+            labels = cluster_ap_full(hist_matrix, channel_sizes,
                                        preference=cfg.get("preference"))
         else:
             labels = cluster_hdbscan(hist_matrix, channel_sizes,

@@ -88,7 +88,7 @@ def run_python(use_ap: bool, out_path: Path) -> tuple:
     from clustering_pipeline import (
         load_cleaned_motion, process_motion,
         extract_histogram_features, ARENA_BIN_EDGES,
-        cluster_hdbscan, cluster_ap_sparse,
+        cluster_hdbscan, cluster_ap_full,
     )
     import io, contextlib
 
@@ -105,7 +105,7 @@ def run_python(use_ap: bool, out_path: Path) -> tuple:
 
     with contextlib.redirect_stdout(buf):
         if use_ap:
-            labels = cluster_ap_sparse(hist, channel_sizes)
+            labels = cluster_ap_full(hist, channel_sizes)
         else:
             labels = cluster_hdbscan(hist, channel_sizes, min_cluster_size=5)
 

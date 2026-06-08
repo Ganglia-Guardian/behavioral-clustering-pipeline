@@ -38,7 +38,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from clustering_pipeline import (
     load_cleaned_motion, process_motion,
     extract_histogram_features, ARENA_BIN_EDGES,
-    cluster_hdbscan, cluster_ap_sparse, cluster_ap_sampled,
+    cluster_hdbscan, cluster_ap_full, cluster_ap_sampled,
     _build_cdf_features, _silhouette, WIN_SIZE,
 )
 from prepare_test_data import convert as prepare_csv
@@ -187,7 +187,7 @@ def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
                 labels = cluster_hdbscan(hist, channel_sizes, min_cluster_size=mcs,
                                          _timing=_timing)
             elif method == "ap_full":
-                labels = cluster_ap_sparse(hist, channel_sizes, _timing=_timing)
+                labels = cluster_ap_full(hist, channel_sizes, _timing=_timing)
             elif method == "ap_sampled":
                 labels = cluster_ap_sampled(hist, channel_sizes,
                                              sample_size=AP_SAMPLE_SIZE, _timing=_timing,

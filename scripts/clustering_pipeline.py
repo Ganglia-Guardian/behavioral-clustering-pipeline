@@ -230,50 +230,29 @@ def extract_histogram_features(sensor: dict, bin_edges: list) -> np.ndarray:
 #          (replaces runDistanceSim.m option 2, the O(N²) EMD double loop)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_sparse_similarity(hist_matrix: np.ndarray,
-                             channel_sizes: list,
-                             K: int = 100) -> np.ndarray:
+def build_knn_similarity(hist_matrix: np.ndarray,
+                          channel_sizes: list,
+                          K: int = 100) -> np.ndarray:
     """
-    Compute a sparse K-nearest-neighbor similarity matrix using FAISS,
-    completely replacing the O(N²) double for-loop in runDistanceSim.m.
+    [Experimental — not used in the main pipeline]
 
-    Two key ideas:
+    Build a sparse K-nearest-neighbor similarity matrix using FAISS IVFFlat ANN.
+    Intended as input to a Sparse AP implementation (equivalent to Matlab's
+    apclusterSparse.m).  sklearn's AffinityPropagation does not support sparse
+    input, so this function has no downstream caller until a custom Sparse AP
+    is added.
 
-    1) 1D Wasserstein via CDF L1 distance
-       For a 1D histogram with uniform bin widths, the Wasserstein-1 (EMD)
-       distance has a closed-form solution:
-           W1(p, q) = sum_k | CDF_p(k) - CDF_q(k) | * bin_width
-       where CDF is the cumulative sum of the histogram.
-       This is O(d) per pair and fully vectorizable — no optimization solver
-       needed.  The original code calls emd() MEX ~7.5 billion times; here
-       we compute CDF once per window and let FAISS handle the distances.
-
-    2) Approximate nearest neighbors (ANN) with FAISS IVFFlat
-       Instead of computing all N*(N-1)/2 pairs (O(N²)), FAISS only finds
-       the K most similar neighbors for each window using an inverted-file
-       index.  This reduces time to O(N * K * log N) and memory to O(N * K).
-
-       For N=120,000 and K=100:
-         - Full matrix:  120,000² × 8 bytes = 115 GB
-         - ANN output:   120,000 × 100 × 8 bytes = 96 MB
-
-    Parameters
-    ----------
-    hist_matrix   : (N_windows, total_bins)
-    channel_sizes : number of bins per channel, e.g. [99, 99, 99, 99]
-    K             : number of nearest neighbors to keep per window
+    For N=120,000 and K=100:
+      - Full N×N matrix : 115 GB
+      - K-NN output     : 96 MB
 
     Returns
     -------
     s : np.ndarray, shape (M, 3)
-        Sparse similarity in triplet format [i, j, sim_value],
-        compatible with apclusterSparse input format.
+        Triplet format [i, j, sim_value] compatible with apclusterSparse.
     """
-    print(f"[4/5] Building sparse similarity matrix (FAISS ANN, K={K})...")
+    print(f"[experimental] Building K-NN similarity matrix (FAISS ANN, K={K})...")
 
-    # Convert per-channel histograms to CDF representations.
-    # L1 distance between CDFs equals the Wasserstein-1 distance
-    # (up to a constant bin-width factor, which cancels in comparisons).
     cdfs = []
     col  = 0
     for size in channel_sizes:
@@ -281,16 +260,12 @@ def build_sparse_similarity(hist_matrix: np.ndarray,
         cdfs.append(np.cumsum(h, axis=1))
         col += size
 
-    cdf_features = np.hstack(cdfs).astype(np.float32)  # (N_windows, total_bins)
+    cdf_features = np.hstack(cdfs).astype(np.float32)
     N, d = cdf_features.shape
 
-    # Build a FAISS IVFFlat index with L1 (Manhattan) metric.
-    # n_cells: number of Voronoi partitions — sqrt(N) is the standard heuristic.
-    # nprobe:  how many cells to search at query time; higher = more accurate but slower.
     n_cells = max(int(np.sqrt(N)), 64)
     nprobe  = max(n_cells // 10, 10)
 
-    print(f"      Training FAISS index ({n_cells} Voronoi cells, nprobe={nprobe})...")
     quantizer = faiss.IndexFlat(d, faiss.METRIC_L1)
     index     = faiss.IndexIVFFlat(quantizer, d, n_cells, faiss.METRIC_L1)
     index.train(cdf_features)
@@ -298,23 +273,18 @@ def build_sparse_similarity(hist_matrix: np.ndarray,
     index.nprobe = nprobe
 
     t0 = time.time()
-    distances, neighbors = index.search(cdf_features, K + 1)  # +1 includes self
+    distances, neighbors = index.search(cdf_features, K + 1)
     print(f"      FAISS search: {time.time() - t0:.1f}s")
 
-    # Column 0 is always the query point itself (distance = 0); drop it
-    distances = distances[:, 1:]   # (N, K)
-    neighbors = neighbors[:, 1:]   # (N, K)
+    distances = distances[:, 1:]
+    neighbors = neighbors[:, 1:]
 
-    # Convert L1-CDF distance to AP-style similarity: s(i,j) = -(EMD²)
-    # This matches the sign convention in runDistanceSim.m line 72:
-    #   Dsim(pp,qq) = -(emd(...).^2)
     similarities = -(distances.astype(np.float64) ** 2)
 
     rows  = np.repeat(np.arange(N), K)
     cols  = neighbors.ravel()
     vals  = similarities.ravel()
 
-    # FAISS returns -1 for missing neighbors when K > available points
     valid = cols >= 0
     s     = np.column_stack([rows[valid], cols[valid], vals[valid]])
 
@@ -434,7 +404,7 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
 # Step 5b — Affinity Propagation  (optional, for comparison with Matlab)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def cluster_ap_sparse(hist_matrix: np.ndarray,
+def cluster_ap_full(hist_matrix: np.ndarray,
                       channel_sizes: list,
                       K: int = 100,
                       preference: float = None,
@@ -547,7 +517,7 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
     ----------
     sample_size : number of windows to pass to AP (default 6,000).
     preference  : AP preference — controls cluster count, same as
-                  cluster_ap_sparse().  Default None uses min(affinity).
+                  cluster_ap_full().  Default None uses min(affinity).
     """
     from sklearn.cluster import AffinityPropagation
     import scipy.spatial.distance as ssd
@@ -556,7 +526,7 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
 
     if N <= sample_size:
         print(f"[4/5] AP sampled: N={N:,} ≤ sample_size={sample_size:,}, running full AP.")
-        return cluster_ap_sparse(hist_matrix, channel_sizes, preference=preference)
+        return cluster_ap_full(hist_matrix, channel_sizes, preference=preference)
 
     print(f"[4/5] AP sampled  (N={N:,}, sample={sample_size:,}, "
           f"{100*sample_size/N:.0f}% of data) ...")
@@ -672,7 +642,7 @@ def run_pipeline(input_csv:         str,
     N_windows     = hist_matrix.shape[0]
 
     if use_ap:
-        labels = cluster_ap_sparse(hist_matrix, channel_sizes,
+        labels = cluster_ap_full(hist_matrix, channel_sizes,
                                    K=ann_k, preference=preference)
     elif use_ap_sampled:
         labels = cluster_ap_sampled(hist_matrix, channel_sizes,
