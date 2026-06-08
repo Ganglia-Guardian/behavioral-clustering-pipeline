@@ -164,15 +164,16 @@ Results saved to `results/method_comparison_report.txt` and `results/method_comp
 **Old Python (incorrect):** used 99 uniform bins per channel, producing a 396-dimensional feature vector.  
 **Current Python:** uses the exact same 30-bin edges loaded from `hardHistNew.mat`, producing a 30-dimensional feature vector that matches the Matlab pipeline.
 
-```
-Channel      Bins  Edge range
-──────────────────────────────────────────────
-y_GA          11   [−1.0, …, 1.0, +∞]
-z             11   [−1.5, …, 1.0, +∞]
-z_gyro         6   [−100, −50, 0, 50, 100, +∞]
-log(totAccel)  2   [−3.0, +∞]
-──────────────────────────────────────────────
-Total         30
+```python
+# 11 bins: y_GA
+[-1.0, -0.7778, -0.5556, -0.3333, -0.1111, 0.1111, 0.3333, 0.5556, 0.7778, 1.0, np.inf]
+# 11 bins: z
+[-1.5, -1.2222, -0.9444, -0.6667, -0.3889, -0.1111, 0.1667, 0.4444, 0.7222, 1.0, np.inf]
+# 6 bins: z_gyro
+[-100.0, -50.0, 0.0, 50.0, 100.0, np.inf]
+# 2 bins: log(totAccelBA)
+[-3.0, np.inf]
+# Total: 30 bins
 ```
 
 ### 2. Signal processing — zero-phase filtering
