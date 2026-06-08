@@ -286,12 +286,3 @@ Cluster_detail_results.csv
         ClusterIdx | Timestamp | Folder_Name
 ```
 
----
-
-## Current Assumptions and Limitations
-
-- Histogram bin edges are inherited from the Matlab pipeline and are not learned from each dataset.
-- The current 2D bin settings reuse the 3D edges and may need separate calibration.
-- Histogram features summarize value distributions but do not preserve temporal order inside a 300ms window.
-- Cross-channel relationships are weakened because each channel is histogrammed separately.
-- AP full is only practical for small datasets; use AP sampled or HDBSCAN for large recordings.
