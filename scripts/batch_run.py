@@ -20,6 +20,7 @@ import traceback
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from tqdm import tqdm
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT   = SCRIPTS_DIR.parent
@@ -395,9 +396,11 @@ def main():
 
     all_metrics = []
 
-    for cfg in DATASETS:
+    pbar = tqdm(DATASETS, desc="Datasets", unit="dataset")
+    for cfg in pbar:
+        pbar.set_postfix_str(cfg["name"])
         hr(f"[{DATASETS.index(cfg)+1}/{len(DATASETS)}]  {cfg['name']}")
-        print(f"  {cfg['note']}")
+        tqdm.write(f"  {cfg['note']}")
         out_dir = RESULTS_DIR / cfg["name"]
 
         try:
