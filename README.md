@@ -167,10 +167,10 @@ Results saved to `results/method_comparison_report.txt` and `results/method_comp
 ```
 Channel      Bins  Edge range
 ──────────────────────────────────────────────
-y_GA          11   [−∞, −1.0, …, 1.0, +∞]
-z             11   [−∞, −1.5, …, 1.0, +∞]
-z_gyro         6   [−∞, −100, −50, 0, 50, 100, +∞]
-log(totAccel)  2   [−∞, −3.0, +∞]
+y_GA          11   [−1.0, …, 1.0, +∞]
+z             11   [−1.5, …, 1.0, +∞]
+z_gyro         6   [−100, −50, 0, 50, 100, +∞]
+log(totAccel)  2   [−3.0, +∞]
 ──────────────────────────────────────────────
 Total         30
 ```
