@@ -166,9 +166,9 @@ W₁(p, q) = Σ |CDF_p(k) − CDF_q(k)|
 
 | Method | Flag | Peak memory at N=24,000 | Time at N=24,000 |
 |---|---|---|---|
-| HDBSCAN | *(default)* | ~500 MB (UMAP) | ~15 min |
+| HDBSCAN | *(default)* | ~500 MB (UMAP) | ~20 s |
 | AP sampled | `--use-ap-sampled` | ~288 MB (6,000² affinity) | ~30 s |
-| AP full | `--use-ap` | ~14 GB (N² affinity) | ~7 min |
+| AP full | `--use-ap` | ~14 GB (N² affinity) | ~10 min (est.) |
 
 ---
 
