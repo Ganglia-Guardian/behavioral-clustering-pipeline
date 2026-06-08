@@ -186,6 +186,7 @@ def convert(input_path: str, output_path: str, label: str) -> dict:
     cleaned_motion[col13] = label
 
     combined = pd.concat([other_df, cleaned_motion], ignore_index=True)
+    combined = combined.rename(columns={col13: "Folder_Name"})
     combined  = combined.sort_values("Timestamp").reset_index(drop=True)
     combined.to_csv(output_path, index=False)
 

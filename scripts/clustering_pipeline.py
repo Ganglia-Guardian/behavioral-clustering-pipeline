@@ -17,7 +17,7 @@ Improvements in this script:
   4. HDBSCAN clustering                        — O(N log N) time, O(N) memory, no preset K needed
 
 Requirements:
-    pip install numpy scipy pandas hdbscan faiss-cpu h5py
+    pip install numpy scipy pandas scikit-learn hdbscan umap-learn faiss-cpu h5py
 
 Usage:
     python clustering_pipeline.py \\
@@ -97,7 +97,7 @@ def load_cleaned_motion(csv_path: str) -> tuple:
     print(f"      Motion rows: {len(motion_df):,}")
 
     timestamps   = motion_df["Timestamp"].values.astype(np.float64)
-    folder_names = motion_df.iloc[:, 13].values
+    folder_names = motion_df["Folder_Name"].values
 
     # DataElement0 through DataElement9 sit at column indices 3–12
     raw_motion = motion_df.iloc[:, 3:13].values.astype(np.float64)
