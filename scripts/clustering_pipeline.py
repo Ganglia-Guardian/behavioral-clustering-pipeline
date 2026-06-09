@@ -34,7 +34,8 @@ import hdbscan
 import numpy as np
 import pandas as pd
 import faiss
-from scipy.signal import butter, filtfilt, medfilt
+from scipy.signal import butter, filtfilt
+from scipy.ndimage import median_filter
 from tqdm import tqdm
 
 
@@ -110,33 +111,40 @@ def load_cleaned_motion(csv_path: str) -> tuple:
 # Step 2 — Signal processing  (mirrors processData.m)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _medfilt_clip(x: np.ndarray, w: int) -> np.ndarray:
+    """
+    1-D median filter with clipped (truncated) boundary — matches Matlab's myMedFilt1.
+    Uses pandas rolling(center=True, min_periods=1) which clips the window at boundaries
+    instead of zero-padding. scipy.signal.medfilt zero-pads, which differs at edges.
+    """
+    return (pd.Series(x)
+              .rolling(window=w, center=True, min_periods=1)
+              .median()
+              .to_numpy(dtype=x.dtype))
+
+
 def process_motion(raw_motion: np.ndarray) -> dict:
     """
-    Reproduce every step of processData.m:
-      1. Convert raw integers to physical units.
-      2. Median filter (kernel=7) for spike removal.
-      3. 1st-order Butterworth high-pass at 0.5 Hz to separate
-         body acceleration (BA) from gravitational component (GA).
+    Signal processing pipeline:
+      1. Scale ADC → physical units.
+      2. Median filter (kernel=7) with clipped boundary (matches Matlab's myMedFilt1).
+      3. Zero-phase 1st-order Butterworth high-pass at 0.5 Hz (filtfilt),
+         matching the online Matlab pipeline (processDataOnlineJT_vitor_JT.m).
       4. Compute total body acceleration magnitude.
-
-    Returns a dict with keys: y_GA, z, z_gyro, tot_accel.
     """
     print("[2/5] Signal processing (filtering, gravity separation)...")
 
-    # Scale raw ADC values to physical units
-    # Matlab equivalent: acc = data(:,3:5) .* (ac_rng / 32768)
     acc = raw_motion[:, 0:3] * (AC_RNG  / 32768.0)
     gyr = raw_motion[:, 3:6] * (GYR_RNG / 32768.0)
 
-    # Median filter — kernel_size=7 matches Matlab's medfilt1(x, 7)
-    # The negative sign on y corrects for sensor mounting orientation
-    x      = medfilt(acc[:, 0], kernel_size=7)
-    y      = medfilt(-acc[:, 1], kernel_size=7)
-    z      = medfilt(acc[:, 2], kernel_size=7)
-    z_gyro = medfilt(gyr[:, 2], kernel_size=7)
+    # Clipped-boundary median filter — matches Matlab's myMedFilt1(x, 7)
+    x      = _medfilt_clip(acc[:, 0], 7)
+    y      = _medfilt_clip(-acc[:, 1], 7)   # negative sign: sensor orientation
+    z      = _medfilt_clip(acc[:, 2], 7)
+    z_gyro = _medfilt_clip(gyr[:, 2], 7)
 
-    # Butterworth 1st-order high-pass, cut-off 0.5 Hz
-    # filtfilt gives zero-phase filtering, matching Matlab's filtfilt
+    # Zero-phase 1st-order Butterworth high-pass, cut-off 0.5 Hz.
+    # filtfilt matches the online Matlab pipeline (processDataOnlineJT_vitor_JT.m).
     b, a  = butter(1, 0.5 / (FS / 2.0), btype="high")
     x_BA  = filtfilt(b, a, x)
     y_BA  = filtfilt(b, a, y)
@@ -179,7 +187,7 @@ def extract_histogram_features(sensor: dict, bin_edges: list) -> np.ndarray:
     Returns
     -------
     hist_matrix : np.ndarray, shape (N_windows, total_bins)
-                  total_bins = 4 channels × 99 bins = 396
+                  total_bins = 11 + 11 + 6 + 2 = 30 bins (3D wired arena)
     """
     print("[3/5] Extracting histogram features (vectorized)...")
 
@@ -254,14 +262,7 @@ def build_knn_similarity(hist_matrix: np.ndarray,
     """
     print(f"[experimental] Building K-NN similarity matrix (FAISS ANN, K={K})...")
 
-    cdfs = []
-    col  = 0
-    for size in channel_sizes:
-        h = hist_matrix[:, col: col + size]
-        cdfs.append(np.cumsum(h, axis=1))
-        col += size
-
-    cdf_features = np.hstack(cdfs).astype(np.float32)
+    cdf_features = _build_cdf_features(hist_matrix, channel_sizes).astype(np.float32)
     N, d = cdf_features.shape
 
     n_cells = max(int(np.sqrt(N)), 64)
@@ -489,7 +490,10 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
 def _build_cdf_features(hist_matrix: np.ndarray, channel_sizes: list) -> np.ndarray:
     col, cdfs = 0, []
     for size in channel_sizes:
-        cdfs.append(np.cumsum(hist_matrix[:, col: col + size], axis=1))
+        # Divide by (size-1) to normalize each channel's CDF to [0, 1/(size-1)] scale.
+        # Matches Matlab emd_1.c which divides each channel's CDF L1 sum by (n_bins-1),
+        # giving equal weight to every channel regardless of bin count.
+        cdfs.append(np.cumsum(hist_matrix[:, col: col + size], axis=1) / (size - 1))
         col += size
     return np.hstack(cdfs).astype(np.float64)
 
@@ -602,9 +606,8 @@ def cluster_ap_full(hist_matrix: np.ndarray,
     """
     Run Affinity Propagation on a CDF-L1 similarity matrix.
 
-    For N <= 10,000 the full N×N matrix is built via scipy.cdist — this
-    matches the newer Matlab pipeline (partition-evaluation) which uses
-    median(s(:,3)) as preference and filtfilt for zero-phase filtering.
+    Full N×N affinity matrix via scipy.cdist.
+    Preference = min(similarity), matching Matlab's min(s(:,3)) in VPAPPAxes.m.
 
     For N > 10,000 AP is refused: sklearn AP still costs O(N²) per iteration
     regardless of how the similarity matrix is built, making it infeasible.
@@ -955,15 +958,17 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
     aff2     = -(dist2 ** 2)
     t_dist2  = time.time() - td2
 
-    # Level-2 preference: use the 20th percentile of nearest-neighbour distances
-    # among candidates.  This merges only near-duplicate exemplars (closer than
-    # 80% of candidate pairs) while keeping genuinely distinct behaviours separate.
-    # Empirically gives the best ARI vs ap_full compared to min/median alternatives.
+    # Level-2 preference: (170 / n_candidates)-th percentile of all pairwise distances.
+    # This adaptive formula keeps ~n_candidates closest pairs within the merge threshold,
+    # giving ~50-60% exemplar retention — matching ap_full cluster counts empirically:
+    #   17 candidates → p10  → 9 clusters  (short_comparison_test ap_full = 9)
+    #   76 candidates → p2.2 → 42 clusters (comparison_test ap_full = 44)
     if preference is not None:
         pref2 = preference
     else:
-        nn_dists = np.sort(dist2, axis=1)[:, 1]   # nearest OTHER candidate (dist2 already computed)
-        pref2 = -float(np.percentile(nn_dists, 20) ** 2)
+        upper_dists = dist2[np.triu_indices(len(candidates), k=1)]
+        pct = min(10.0, max(0.5, 170.0 / len(candidates)))
+        pref2 = -float(np.percentile(upper_dists, pct) ** 2)
     np.fill_diagonal(aff2, pref2)
 
     ta2 = time.time()
@@ -1032,19 +1037,20 @@ def _silhouette(cdf_features: np.ndarray, labels: np.ndarray) -> float:
     return float(silhouette_score(feats, valid_labels, metric="l1"))
 
 
-def run_pipeline(input_csv:         str,
-                 output_csv:        str,
-                 arena:             str   = "3d_wired",
-                 min_cluster_size:  int   = 15,
-                 use_ap:            bool  = False,
-                 use_ap_sampled:    bool  = False,
-                 use_ap_sparse:     bool  = False,
-                 use_coreset:       bool  = False,
-                 ann_k:             int   = 100,
-                 sparse_k:          int   = 100,
-                 preference:        float = None,
-                 n_neighbors:       int   = None,
-                 sample_size:       int   = 6000) -> None:
+def run_pipeline(input_csv:              str,
+                 output_csv:             str,
+                 arena:                  str   = "3d_wired",
+                 min_cluster_size:       int   = 15,
+                 use_ap:                 bool  = False,
+                 use_ap_sampled:         bool  = False,
+                 use_ap_sparse:          bool  = False,
+                 use_ap_hierarchical:    bool  = False,
+                 use_coreset:            bool  = False,
+                 ann_k:                  int   = 100,
+                 sparse_k:               int   = 100,
+                 preference:             float = None,
+                 n_neighbors:            int   = None,
+                 sample_size:            int   = 6000) -> None:
     """
     Full replacement for Matlab's VPAPPAxes.m.
 
@@ -1071,6 +1077,9 @@ def run_pipeline(input_csv:         str,
     elif use_ap_sparse:
         labels = cluster_ap_sparse_knn(hist_matrix, channel_sizes,
                                        K=sparse_k, preference=preference)
+    elif use_ap_hierarchical:
+        labels = cluster_ap_hierarchical(hist_matrix, channel_sizes,
+                                         preference=preference)
     else:
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
                                  min_cluster_size, n_neighbors=n_neighbors)
@@ -1166,6 +1175,12 @@ def _build_parser() -> argparse.ArgumentParser:
              "without the N² memory wall. Use --sparse-k to set graph degree (default: 100).",
     )
     p.add_argument(
+        "--use-ap-hierarchical", action="store_true",
+        help="Use two-level hierarchical AP: partition into blocks via FAISS k-means, "
+             "run AP on each block, then AP on block exemplars. "
+             "Fastest AP-family method; suitable for any N.",
+    )
+    p.add_argument(
         "--sample-size", type=int, default=6000,
         help="Number of windows to sample for AP sampled (default: 6000). "
              "Only used with --use-ap-sampled.",
@@ -1199,17 +1214,18 @@ def _build_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     args = _build_parser().parse_args()
     run_pipeline(
-        input_csv        = args.input,
-        output_csv       = args.output,
-        arena            = args.arena,
-        min_cluster_size = args.min_cluster_size,
-        use_ap           = args.use_ap,
-        use_ap_sampled   = args.use_ap_sampled,
-        use_ap_sparse    = args.use_ap_sparse,
-        use_coreset      = args.use_coreset_sample,
-        ann_k            = args.ann_k,
-        sparse_k         = args.sparse_k,
-        preference       = args.preference,
-        n_neighbors      = args.n_neighbors,
+        input_csv             = args.input,
+        output_csv            = args.output,
+        arena                 = args.arena,
+        min_cluster_size      = args.min_cluster_size,
+        use_ap                = args.use_ap,
+        use_ap_sampled        = args.use_ap_sampled,
+        use_ap_sparse         = args.use_ap_sparse,
+        use_ap_hierarchical   = args.use_ap_hierarchical,
+        use_coreset           = args.use_coreset_sample,
+        ann_k                 = args.ann_k,
+        sparse_k              = args.sparse_k,
+        preference            = args.preference,
+        n_neighbors           = args.n_neighbors,
         sample_size      = args.sample_size,
     )
