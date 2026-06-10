@@ -356,11 +356,11 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
     S_sym = S_ij.maximum(S_ij.T)          # element-wise max → symmetric
 
     if preference is None:
-        # Use min(K-NN similarity). Note: this is biased toward 0 compared to the
-        # full N×N min, so sparse AP will produce more clusters than full AP.
-        # This is a structural property of K-NN sparse AP, not tunable via preference.
-        preference = float(s_arr.min())
-        print(f"      Preference: {preference:.4f}  (auto = min K-NN similarity)")
+        # Estimate global min(similarity) from all N windows, same as AP full/sampled.
+        # Using K-NN min is biased toward 0 (only near-neighbor pairs), causing
+        # excessive cluster count. Global estimate matches Matlab's min(s(:,3)).
+        preference = _estimate_min_affinity(cdf_all)
+        print(f"      Preference: {preference:.4f}  (global min estimate from {N:,} windows)")
     else:
         print(f"      Preference: {preference:.4f}  (user-specified)")
 

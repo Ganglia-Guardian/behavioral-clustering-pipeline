@@ -1,6 +1,6 @@
 =====================================================================================
   Method Comparison Report
-  Generated: 2026-06-09 23:33
+  Generated: 2026-06-10 11:17
 =====================================================================================
   AP preference: min(similarity)  [matches Matlab AccelCluster, min(s(:,3))]
   Silhouette: >0.5 good | 0.25–0.5 reasonable | <0.25 poor
@@ -15,8 +15,8 @@
   ap_full       33        0.0%    0.1479      poor        —               nan      
   ap_sampled    23        0.0%    0.1286      poor        0.3894          nan      
   ap_coreset    24        0.0%    0.1342      poor        0.3378          nan      
-  ap_sparse     88        0.0%    0.1151      poor        0.3250          nan      
-  ap_hierarchical33        0.0%    0.1487      poor        0.3472          18.16    
+  ap_sparse     75        0.0%    0.1168      poor        0.3505          16.05    
+  ap_hierarchical33        0.0%    0.1487      poor        0.3472          nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   control_mouse_1_jul  (N = 23,902 windows)
@@ -27,8 +27,8 @@
   ap_full       —         —       —           skipped     —               —        
   ap_sampled    22        0.0%    0.1500      poor        —               nan      
   ap_coreset    25        0.0%    0.1553      poor        —               nan      
-  ap_sparse     160       0.0%    0.0758      poor        —               nan      
-  ap_hierarchical48        0.0%    0.1275      poor        —               30.44    
+  ap_sparse     134       0.0%    0.0849      poor        —               81.27    
+  ap_hierarchical48        0.0%    0.1275      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   control_mouse_1_oct  (N = 23,906 windows)
@@ -39,8 +39,8 @@
   ap_full       —         —       —           skipped     —               —        
   ap_sampled    21        0.0%    0.1567      poor        —               nan      
   ap_coreset    26        0.0%    0.1544      poor        —               nan      
-  ap_sparse     169       0.0%    0.0693      poor        —               nan      
-  ap_hierarchical46        0.0%    0.1291      poor        —               37.22    
+  ap_sparse     142       0.0%    0.0594      poor        —               112.59   
+  ap_hierarchical46        0.0%    0.1291      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   moving_test  (N = 47,028 windows)
@@ -51,8 +51,8 @@
   ap_full       —         —       —           skipped     —               —        
   ap_sampled    22        0.0%    0.2856      reasonable  —               nan      
   ap_coreset    32        0.0%    0.2858      reasonable  —               nan      
-  ap_sparse     445       0.0%    0.0111      poor        —               nan      
-  ap_hierarchical32        0.0%    0.2348      poor        —               71.59    
+  ap_sparse     222       0.0%    0.2025      poor        —               172.27   
+  ap_hierarchical32        0.0%    0.2348      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   mp_mouse_1_jul  (N = 19,714 windows)
@@ -63,8 +63,8 @@
   ap_full       41        0.0%    0.1934      poor        —               nan      
   ap_sampled    25        0.0%    0.1802      poor        0.3947          nan      
   ap_coreset    25        0.0%    0.2174      poor        0.3531          nan      
-  ap_sparse     136       0.0%    -0.0213     poor        0.3016          nan      
-  ap_hierarchical38        0.0%    0.1974      poor        0.4372          26.38    
+  ap_sparse     108       0.0%    0.1532      poor        0.3890          61.23    
+  ap_hierarchical38        0.0%    0.1974      poor        0.4372          nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   mp_mouse_1_oct  (N = 23,866 windows)
@@ -75,8 +75,8 @@
   ap_full       —         —       —           skipped     —               —        
   ap_sampled    24        0.0%    0.2408      poor        —               nan      
   ap_coreset    25        0.0%    0.1849      poor        —               nan      
-  ap_sparse     149       0.0%    -0.0635     poor        —               nan      
-  ap_hierarchical33        0.0%    0.2086      poor        —               28.55    
+  ap_sparse     145       0.0%    0.1348      poor        —               190.23   
+  ap_hierarchical33        0.0%    0.2086      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   short_comparison_test  (N = 1,195 windows)
@@ -87,8 +87,8 @@
   ap_full       9         0.0%    0.1520      poor        —               nan      
   ap_sampled    9         0.0%    0.1520      poor        1.0000          nan      
   ap_coreset    9         0.0%    0.1520      poor        1.0000          nan      
-  ap_sparse     22        0.0%    0.1410      poor        0.3422          nan      
-  ap_hierarchical11        0.0%    0.1599      poor        0.5484          0.18     
+  ap_sparse     19        0.0%    0.1328      poor        0.3949          0.3      
+  ap_hierarchical11        0.0%    0.1599      poor        0.5484          nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   still_test  (N = 23,877 windows)
@@ -99,7 +99,7 @@
   ap_full       —         —       —           skipped     —               —        
   ap_sampled    20        0.0%    0.1986      poor        —               nan      
   ap_coreset    26        0.0%    0.1962      poor        —               nan      
-  ap_sparse     147       0.0%    -0.1140     poor        —               nan      
-  ap_hierarchical36        0.0%    0.1683      poor        —               27.31    
+  ap_sparse     118       0.0%    0.1789      poor        —               53.56    
+  ap_hierarchical36        0.0%    0.1683      poor        —               nan      
 
 =====================================================================================
