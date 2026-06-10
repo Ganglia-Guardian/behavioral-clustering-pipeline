@@ -62,7 +62,7 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
 ### Run clustering
 
 ```bash
-# HDBSCAN (default)
+# AP sampled (default — recommended for all N)
 .venv/bin/python3 scripts/clustering_pipeline.py \
     --input  path/to/combined_harp_data_cleaned.csv \
     --output path/to/Cluster_detail_results.csv
@@ -73,7 +73,7 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
     --output path/to/Cluster_detail_results.csv \
     --use-ap
 
-# AP sampled
+# AP sampled (explicit flag)
 .venv/bin/python3 scripts/clustering_pipeline.py \
     --input  path/to/combined_harp_data_cleaned.csv \
     --output path/to/Cluster_detail_results.csv \
@@ -96,18 +96,24 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
     --input  path/to/combined_harp_data_cleaned.csv \
     --output path/to/Cluster_detail_results.csv \
     --use-ap-sparse
+
+# HDBSCAN (reference only — see Known Limitations)
+.venv/bin/python3 scripts/clustering_pipeline.py \
+    --input  path/to/combined_harp_data_cleaned.csv \
+    --output path/to/Cluster_detail_results.csv \
+    --use-hdbscan
 ```
 
 **Method guide:**
 
 | Method | Flag | Notes |
 |---|---|---|
-| HDBSCAN | *(default)* | Fastest; handles noise points; runs directly on 30-D CDF features |
+| AP sampled | *(default)* | Recommended for all N; scales to large datasets |
 | AP full | `--use-ap` | Closest to Matlab; N ≤ 20,000 only |
-| AP sampled | `--use-ap-sampled` | Best AP-compatible option for large N |
 | AP coreset | `--use-ap-sampled --use-coreset-sample` | Greedy K-Center subset; better rare-behavior coverage than random |
 | AP hierarchical | `--use-ap-hierarchical` | Two-level AP; experimental — results may vary |
 | Sparse AP | `--use-ap-sparse` | See [Known Limitations](#known-limitations) |
+| HDBSCAN | `--use-hdbscan` | Reference only — not recommended for production; see [Known Limitations](#known-limitations) |
 
 **Key parameters:**
 

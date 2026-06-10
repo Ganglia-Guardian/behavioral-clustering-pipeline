@@ -1035,6 +1035,7 @@ def run_pipeline(input_csv:              str,
                  use_ap_sampled:         bool  = False,
                  use_ap_sparse:          bool  = False,
                  use_ap_hierarchical:    bool  = False,
+                 use_hdbscan:            bool  = False,
                  use_coreset:            bool  = False,
                  ann_k:                  int   = 100,
                  sparse_k:               int   = 100,
@@ -1059,19 +1060,21 @@ def run_pipeline(input_csv:              str,
     if use_ap:
         labels = cluster_ap_full(hist_matrix, channel_sizes,
                                    K=ann_k, preference=preference)
-    elif use_ap_sampled:
-        labels = cluster_ap_sampled(hist_matrix, channel_sizes,
-                                    sample_size=sample_size, preference=preference,
-                                    use_coreset=use_coreset)
     elif use_ap_sparse:
         labels = cluster_ap_sparse_knn(hist_matrix, channel_sizes,
                                        K=sparse_k, preference=preference)
     elif use_ap_hierarchical:
         labels = cluster_ap_hierarchical(hist_matrix, channel_sizes,
                                          preference=preference)
-    else:
+    elif use_hdbscan:
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
                                  min_cluster_size)
+    else:
+        # Default: AP sampled — works for any N, no density assumptions,
+        # consistent with the Matlab AP pipeline.
+        labels = cluster_ap_sampled(hist_matrix, channel_sizes,
+                                    sample_size=sample_size, preference=preference,
+                                    use_coreset=use_coreset)
 
     # ── Silhouette Score ──────────────────────────────────────────────────────
     print("[5/5] Computing cluster quality (Silhouette Score)...")
@@ -1170,6 +1173,11 @@ def _build_parser() -> argparse.ArgumentParser:
              "Fastest AP-family method; suitable for any N.",
     )
     p.add_argument(
+        "--use-hdbscan", action="store_true",
+        help="Use HDBSCAN instead of AP sampled (reference only — not recommended for "
+             "production; see Known Limitations in README).",
+    )
+    p.add_argument(
         "--sample-size", type=int, default=6000,
         help="Number of windows to sample for AP sampled (default: 6000). "
              "Only used with --use-ap-sampled.",
@@ -1205,6 +1213,7 @@ if __name__ == "__main__":
         use_ap_sampled        = args.use_ap_sampled,
         use_ap_sparse         = args.use_ap_sparse,
         use_ap_hierarchical   = args.use_ap_hierarchical,
+        use_hdbscan           = args.use_hdbscan,
         use_coreset           = args.use_coreset_sample,
         ann_k                 = args.ann_k,
         sparse_k              = args.sparse_k,
