@@ -191,14 +191,14 @@ AP full is the Matlab-equivalent reference (skipped when N > 20,000).
 
 | Dataset | N | HDBSCAN k | sil | AP full k | sil | AP sampled k | sil | AP coreset k | sil | AP sparse k | sil |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| short_comparison_test | 1,195 | 2 | 0.30 | 9 | 0.15 | 9 | 0.15 | 9 | 0.15 | 22 | 0.14 |
-| comparison_test | 13,799 | 7 | 0.26 | 33 | 0.15 | 23 | 0.13 | 24 | 0.13 | 88 | 0.12 |
-| mp_mouse_1_jul | 19,714 | 82 | 0.07 | 41 | 0.19 | 25 | 0.18 | 25 | **0.22** | 136 | −0.02 |
-| control_mouse_1_jul | 23,902 | 3 | **0.41** | — | — | 22 | 0.15 | 25 | 0.16 | 160 | 0.08 |
-| control_mouse_1_oct | 23,906 | 17 | 0.12 | — | — | 21 | 0.16 | 26 | 0.15 | 169 | 0.07 |
-| mp_mouse_1_oct | 23,866 | 207 | 0.36 | — | — | 24 | **0.24** | 25 | 0.18 | 149 | −0.06 |
-| still_test | 23,877 | 221 | 0.32 | — | — | 20 | 0.20 | 26 | 0.20 | 147 | −0.11 |
-| moving_test | 47,028 | 473 | **0.58** | — | — | 22 | **0.29** | 32 | **0.29** | 445 | 0.01 |
+| short_comparison_test | 1,195 | 2 | 0.30 | 9 | 0.15 | 9 | 0.15 | 9 | 0.15 | 19 | 0.13 |
+| comparison_test | 13,799 | 7 | 0.26 | 33 | 0.15 | 23 | 0.13 | 24 | 0.13 | 75 | 0.12 |
+| mp_mouse_1_jul | 19,714 | 82 | 0.07 | 41 | 0.19 | 25 | 0.18 | 25 | **0.22** | 108 | 0.15 |
+| control_mouse_1_jul | 23,902 | 3 | **0.41** | — | — | 22 | 0.15 | 25 | 0.16 | 134 | 0.08 |
+| control_mouse_1_oct | 23,906 | 17 | 0.12 | — | — | 21 | 0.16 | 26 | 0.15 | 142 | 0.06 |
+| mp_mouse_1_oct | 23,866 | 207 | 0.36 | — | — | 24 | **0.24** | 25 | 0.18 | 145 | 0.13 |
+| still_test | 23,877 | 221 | 0.32 | — | — | 20 | 0.20 | 26 | 0.20 | 118 | 0.18 |
+| moving_test | 47,028 | 473 | **0.58** | — | — | 22 | **0.29** | 32 | **0.29** | 222 | 0.20 |
 
 ### Agreement with AP full (ARI)
 
@@ -206,28 +206,28 @@ ARI = 1.0 → identical; ARI ≈ 0 → no better than chance. Only available for
 
 | Dataset | HDBSCAN ARI | AP sampled ARI | AP coreset ARI | AP sparse ARI |
 |---|---|---|---|---|
-| short_comparison_test | 0.001 | **1.000** | **1.000** | 0.342 |
-| comparison_test | 0.004 | **0.389** | 0.338 | 0.325 |
-| mp_mouse_1_jul | 0.074 | **0.395** | 0.353 | 0.302 |
+| short_comparison_test | 0.001 | **1.000** | **1.000** | 0.395 |
+| comparison_test | 0.004 | **0.389** | 0.338 | 0.351 |
+| mp_mouse_1_jul | 0.074 | **0.395** | 0.353 | 0.389 |
 
 ### Timing
 
 | Dataset | N | HDBSCAN | AP full | AP sampled | AP coreset | AP sparse |
 |---|---|---|---|---|---|---|
-| short_comparison_test | 1,195 | < 0.1 s | 0.6 s | 0.3 s | 0.2 s | 0.2 s |
-| comparison_test | 13,799 | 2.3 s | ~135 s | 9.9 s | 9.8 s | ~20 s |
-| mp_mouse_1_jul | 19,714 | 1.7 s | ~390 s | 15.9 s | 10.3 s | ~36 s |
-| control_mouse_1_jul | 23,902 | 3.9 s | — | 7.6 s | 10.1 s | ~40 s |
-| control_mouse_1_oct | 23,906 | 2.8 s | — | 14.9 s | 12.0 s | ~58 s |
-| mp_mouse_1_oct | 23,866 | 1.7 s | — | 9.6 s | 14.0 s | ~54 s |
-| still_test | 23,877 | 1.7 s | — | 6.5 s | 8.8 s | ~43 s |
-| moving_test | 47,028 | 5.7 s | — | 16.6 s | 10.5 s | ~370 s |
+| short_comparison_test | 1,195 | < 0.1 s | 0.6 s | 0.3 s | 0.2 s | 0.3 s |
+| comparison_test | 13,799 | 2.3 s | ~135 s | 9.9 s | 9.8 s | 16 s |
+| mp_mouse_1_jul | 19,714 | 1.7 s | ~390 s | 15.9 s | 10.3 s | 61 s |
+| control_mouse_1_jul | 23,902 | 3.9 s | — | 7.6 s | 10.1 s | 81 s |
+| control_mouse_1_oct | 23,906 | 2.8 s | — | 14.9 s | 12.0 s | 113 s |
+| mp_mouse_1_oct | 23,866 | 1.7 s | — | 9.6 s | 14.0 s | 190 s |
+| still_test | 23,877 | 1.7 s | — | 6.5 s | 8.8 s | 54 s |
+| moving_test | 47,028 | 5.7 s | — | 16.6 s | 10.5 s | 172 s |
 
 ---
 
 ## Known Limitations
 
-**AP sparse over-clustering:** each node only communicates with its K nearest neighbours, so distant windows never merge. This structurally produces more clusters than AP full regardless of preference — it is not a tuning issue. Use AP sampled or AP coreset instead for large-N datasets.
+**AP sparse over-clustering:** each node only communicates with its K nearest neighbours, so distant windows never merge. This structurally produces more clusters than AP full (typically 4–10×) regardless of preference — it is not a tuning issue. Use AP sampled or AP coreset instead for large-N datasets.
 
 **HDBSCAN noise sensitivity:** cluster count is highly sensitive to `--min-cluster-size` and no single value works well across all dataset sizes. Large datasets can produce hundreds of clusters with majority noise points (e.g. moving_test: 473 clusters / 54% noise). Retained as a reference method; AP methods are preferred for consistent segmentation.
 
