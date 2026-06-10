@@ -124,18 +124,31 @@ Feature channels match `findFeaturesWired3DArena.m`. AP preference = `min(simila
 
 Silhouette scored on 30-D CDF features with L1. AP full skipped when N > 20,000.
 
-### Quality
+### Cluster counts
 
-| Dataset | N | HDBSCAN k / sil | AP full k / sil | AP sampled k / sil | AP coreset k / sil | AP sparse k / sil |
+| Dataset | N | HDBSCAN | AP full | AP sampled | AP coreset | AP sparse |
 |---|---|---|---|---|---|---|
-| short_comparison_test | 1,195 | 2 / 0.30 | 9 / 0.15 | 9 / 0.15 | 9 / 0.15 | 22 / 0.14 |
-| comparison_test | 13,799 | 7 / 0.26 | 33 / 0.15 | 23 / 0.13 | 24 / 0.13 | 88 / 0.12 |
-| mp_mouse_1_jul | 19,714 | 82 / 0.07 | 41 / 0.19 | 25 / 0.18 | 25 / **0.22** | 136 / −0.02 |
-| control_mouse_1_jul | 23,902 | 3 / **0.41** | — | 22 / 0.15 | 25 / 0.16 | 160 / 0.08 |
-| control_mouse_1_oct | 23,906 | 17 / 0.12 | — | 21 / 0.16 | 26 / 0.15 | 169 / 0.07 |
-| mp_mouse_1_oct | 23,866 | 207 / 0.36 | — | 24 / **0.24** | 25 / 0.18 | 149 / −0.06 |
-| still_test | 23,877 | 221 / 0.32 | — | 20 / 0.20 | 26 / 0.20 | 147 / −0.11 |
-| moving_test | 47,028 | 473 / **0.58** | — | 22 / **0.29** | 32 / **0.29** | 445 / 0.01 |
+| short_comparison_test | 1,195 | 2 | 9 | 9 | 9 | 22 |
+| comparison_test | 13,799 | 7 | 33 | 23 | 24 | 88 |
+| mp_mouse_1_jul | 19,714 | 82 | 41 | 25 | 25 | 136 |
+| control_mouse_1_jul | 23,902 | 3 | — | 22 | 25 | 160 |
+| control_mouse_1_oct | 23,906 | 17 | — | 21 | 26 | 169 |
+| mp_mouse_1_oct | 23,866 | 207 | — | 24 | 25 | 149 |
+| still_test | 23,877 | 221 | — | 20 | 26 | 147 |
+| moving_test | 47,028 | 473 | — | 22 | 32 | 445 |
+
+### Silhouette scores
+
+| Dataset | HDBSCAN | AP full | AP sampled | AP coreset | AP sparse |
+|---|---|---|---|---|---|
+| short_comparison_test | 0.30 | 0.15 | 0.15 | 0.15 | 0.14 |
+| comparison_test | 0.26 | 0.15 | 0.13 | 0.13 | 0.12 |
+| mp_mouse_1_jul | 0.07 | 0.19 | 0.18 | **0.22** | −0.02 |
+| control_mouse_1_jul | **0.41** | — | 0.15 | 0.16 | 0.08 |
+| control_mouse_1_oct | 0.12 | — | 0.16 | 0.15 | 0.07 |
+| mp_mouse_1_oct | 0.36 | — | **0.24** | 0.18 | −0.06 |
+| still_test | 0.32 | — | 0.20 | 0.20 | −0.11 |
+| moving_test | **0.58** | — | **0.29** | **0.29** | 0.01 |
 
 ### ARI vs AP full (N ≤ 20,000 only)
 
