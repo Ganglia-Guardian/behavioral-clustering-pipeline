@@ -37,8 +37,6 @@ Python_Pipeline/
 
 ## Setup
 
-**Python 3.10 or later required** (faiss-cpu compatibility).
-
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -48,32 +46,9 @@ All commands below assume you are in `Python_Pipeline/` and use `.venv/bin/pytho
 
 ---
 
-## Input Data Format
+## How to Run
 
-The pipeline reads `combined_harp_data_cleaned.csv` — a concatenated Harp device log with one extra column.
-
-Required columns:
-
-| Column | Type | Description |
-|---|---|---|
-| `Command` | int | Harp message type |
-| `RegisterAddress` | int | **Must be 34** for IMU rows |
-| `Timestamp` | float | Seconds |
-| `DataElement0` | int | Accelerometer X (raw ADC) |
-| `DataElement1` | int | Accelerometer Y |
-| `DataElement2` | int | Accelerometer Z |
-| `DataElement3` | int | Gyroscope X |
-| `DataElement4` | int | Gyroscope Y |
-| `DataElement5` | int | Gyroscope Z |
-| `DataElement6` | int | Magnetometer X |
-| `DataElement7` | int | Magnetometer Y |
-| `DataElement8` | int | Magnetometer Z |
-| `DataElement9` | int | Sample counter (0–127) |
-| `Folder_Name` | str | Session label (e.g. `mouse1_jul`) |
-
-Only rows where `RegisterAddress == 34` are processed; all other rows are ignored.
-
-Use `prepare_test_data.py` to convert a raw Harp-Motion CSV into this format:
+### Prepare raw data
 
 ```bash
 .venv/bin/python3 scripts/prepare_test_data.py \
@@ -82,11 +57,7 @@ Use `prepare_test_data.py` to convert a raw Harp-Motion CSV into this format:
     --label  session_name
 ```
 
-Multiple sessions can be concatenated into one file (pipeline handles them together).
-
----
-
-## How to Run
+Skip this if you already have `combined_harp_data_cleaned.csv`.
 
 ### Run clustering
 
@@ -102,7 +73,7 @@ Multiple sessions can be concatenated into one file (pipeline handles them toget
     --output path/to/Cluster_detail_results.csv \
     --use-ap
 
-# AP sampled (random subset)
+# AP sampled
 .venv/bin/python3 scripts/clustering_pipeline.py \
     --input  path/to/combined_harp_data_cleaned.csv \
     --output path/to/Cluster_detail_results.csv \
@@ -131,9 +102,9 @@ Multiple sessions can be concatenated into one file (pipeline handles them toget
 
 | Method | Flag | Notes |
 |---|---|---|
-| HDBSCAN | *(default)* | Fastest; detects noise points; runs directly on 30-D CDF features with L1 |
+| HDBSCAN | *(default)* | Fastest; handles noise points; runs directly on 30-D CDF features |
 | AP full | `--use-ap` | Closest to Matlab; N ≤ 20,000 only |
-| AP sampled | `--use-ap-sampled` | Random 6,000-window subset → AP → FAISS assignment |
+| AP sampled | `--use-ap-sampled` | Best AP-compatible option for large N |
 | AP coreset | `--use-ap-sampled --use-coreset-sample` | Greedy K-Center subset; better rare-behavior coverage than random |
 | AP hierarchical | `--use-ap-hierarchical` | Two-level AP; experimental — results may vary |
 | Sparse AP | `--use-ap-sparse` | See [Known Limitations](#known-limitations) |
@@ -142,32 +113,18 @@ Multiple sessions can be concatenated into one file (pipeline handles them toget
 
 | Argument | Default | Description |
 |---|---|---|
-| `--arena` | `3d_wired` | Arena type — determines bin edges (see below) |
+| `--arena` | `3d_wired` | `3d_wired`, `3d_wireless`, `2d_wired`, `2d_wireless` |
 | `--min-cluster-size` | `15` | HDBSCAN — smaller → more clusters |
 | `--sample-size` | `6000` | AP sampled/coreset — windows passed to AP |
 | `--sparse-k` | `100` | Sparse AP — K-NN graph degree |
 | `--preference` | auto | AP methods — higher (toward 0) → more clusters |
 
-**Arena types:**
-
-| Value | Description |
-|---|---|
-| `3d_wired` | 3D terrain arena, wired IMU *(default; matches Matlab reference)* |
-| `3d_wireless` | 3D terrain arena, wireless IMU *(same bin edges as 3d_wired)* |
-| `2d_wired` | Flat arena, wired IMU |
-| `2d_wireless` | Flat arena, wireless IMU |
-
 ### Batch runs
 
 ```bash
-# Run all datasets with default method, generate summary report
-.venv/bin/python3 scripts/batch_run.py
-
-# Compare all methods side by side
-.venv/bin/python3 scripts/batch_compare.py
-
-# Re-run only specific methods (other methods loaded from cache)
-.venv/bin/python3 scripts/batch_compare.py --force ap_sampled ap_coreset
+.venv/bin/python3 scripts/batch_run.py                              # all datasets, summary report
+.venv/bin/python3 scripts/batch_compare.py                          # all methods, side-by-side comparison
+.venv/bin/python3 scripts/batch_compare.py --force ap_sampled       # re-run specific methods; others load from cache
 ```
 
 ---
@@ -206,24 +163,23 @@ Raw Harp CSV
     │   cumsum per channel → L1 distance = 1D Wasserstein (EMD)
     │
     ▼  clustering
-    │   cluster_hdbscan()        30-D CDF features, L1 metric → HDBSCAN (no dimensionality reduction)
+    │   cluster_hdbscan()        30-D CDF features, L1 metric → HDBSCAN
     │   cluster_ap_full()        N×N affinity → AP  (preference = global min)
-    │   cluster_ap_sampled()     6,000-sample → AP → FAISS assign  (preference = global min estimate)
+    │   cluster_ap_sampled()     6,000-sample → AP → FAISS assign  (random or coreset)
     │   cluster_ap_sparse_knn()  FAISS K-NN graph → sparse AP → FAISS assign
     │
     ▼
 Cluster_detail_results.csv  (ClusterIdx | Timestamp | Folder_Name)
 ```
 
-**AP preference** is set to `min(similarity)` = −max(L1 dist²), matching Matlab `AccelCluster` (`min(s(:,3))`).  
-For AP sampled/coreset, preference is estimated from 500,000 random pairs across all N windows (not just the subset), ensuring consistent scale with AP full.
+**AP preference** is set to `min(similarity)` = −max(L1²), matching Matlab `AccelCluster` (`min(s(:,3))`).
+For AP sampled/coreset, preference is estimated from 500,000 random pairs across all N windows (not just the subset), keeping the scale consistent with AP full.
 
 ---
 
 ## Results
 
-AP full is the Matlab-equivalent reference (automatically skipped when N > 20,000).  
-Silhouette scores are computed on 30-D CDF features with L1 distance.
+AP full is the Matlab-equivalent reference (skipped when N > 20,000).
 
 ### Cluster counts and Silhouette scores
 
@@ -240,16 +196,15 @@ Silhouette scores are computed on 30-D CDF features with L1 distance.
 
 ### Agreement with AP full (ARI)
 
-ARI = 1.0 → identical to AP full; ARI ≈ 0 → no better than chance.  
-Only computed for datasets where AP full runs (N ≤ 20,000).
+ARI = 1.0 → identical; ARI ≈ 0 → no better than chance. Only available for N ≤ 20,000.
 
-| Dataset | HDBSCAN | AP sampled | AP coreset | AP sparse |
+| Dataset | HDBSCAN ARI | AP sampled ARI | AP coreset ARI | AP sparse ARI |
 |---|---|---|---|---|
 | short_comparison_test | 0.001 | **1.000** | **1.000** | 0.342 |
 | comparison_test | 0.004 | **0.389** | 0.338 | 0.325 |
 | mp_mouse_1_jul | 0.074 | **0.395** | 0.353 | 0.302 |
 
-### Timing (clustering step only)
+### Timing
 
 | Dataset | N | HDBSCAN | AP full | AP sampled | AP coreset | AP sparse |
 |---|---|---|---|---|---|---|
@@ -266,8 +221,8 @@ Only computed for datasets where AP full runs (N ≤ 20,000).
 
 ## Known Limitations
 
-**AP sparse over-clustering:** each node only communicates with its K nearest neighbours, so distant windows never merge. This structurally produces far more clusters than AP full regardless of preference. Negative silhouette scores on some datasets confirm poor partition quality. Use AP sampled or AP coreset instead for large-N datasets.
+**AP sparse over-clustering:** each node only communicates with its K nearest neighbours, so distant windows never merge. This structurally produces more clusters than AP full regardless of preference — it is not a tuning issue. Use AP sampled or AP coreset instead for large-N datasets.
 
-**HDBSCAN noise sensitivity:** HDBSCAN assigns noise points (−1) and its cluster count is highly sensitive to `--min-cluster-size`. On datasets with diverse motion (e.g. `moving_test`, `still_test`), the default `mcs=15` produces hundreds of clusters and high noise rates. HDBSCAN is retained as a reference but AP methods are preferred for consistent behavioral segmentation.
+**HDBSCAN noise sensitivity:** cluster count is highly sensitive to `--min-cluster-size` and no single value works well across all dataset sizes. Large datasets can produce hundreds of clusters with majority noise points (e.g. moving_test: 473 clusters / 54% noise). Retained as a reference method; AP methods are preferred for consistent segmentation.
 
-**AP full memory:** requires an N×N affinity matrix (~14 GB at N=24,000). Automatically skipped when N > 20,000.
+**AP full memory:** builds an N×N distance matrix and an N×N affinity matrix simultaneously (~6 GB at N=20,000). Automatically skipped when N > 20,000.
