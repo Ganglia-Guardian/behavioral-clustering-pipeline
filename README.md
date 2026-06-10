@@ -268,6 +268,6 @@ Only computed for datasets where AP full runs (N ≤ 20,000).
 
 **AP sparse over-clustering:** each node only communicates with its K nearest neighbours, so distant windows never merge. This structurally produces far more clusters than AP full regardless of preference. Negative silhouette scores on some datasets confirm poor partition quality. Use AP sampled or AP coreset instead for large-N datasets.
 
-**HDBSCAN noise sensitivity:** HDBSCAN assigns noise points (−1) and its cluster count is highly sensitive to `--min-cluster-size`. On datasets with diverse motion (e.g. `moving_test`, `still_test`), the default `mcs=15` produces hundreds of clusters and high noise rates. HDBSCAN is retained as a reference but AP methods are preferred for consistent behavioral segmentation.
+**HDBSCAN noise sensitivity:** HDBSCAN assigns noise points (−1) and its cluster count is highly sensitive to `--min-cluster-size`. The default `mcs=15` produces hundreds of clusters and noise rates above 50% on large datasets (e.g. `moving_test`: 473 clusters, 54% noise; `still_test`: 221 clusters, 66% noise). No single `mcs` value works well across all dataset sizes. HDBSCAN is retained as a reference but AP methods are preferred for consistent behavioral segmentation.
 
-**AP full memory:** requires an N×N affinity matrix (~14 GB at N=24,000). Automatically skipped when N > 20,000.
+**AP full memory:** requires an N×N distance matrix and an N×N affinity matrix simultaneously (~6 GB at the N=20,000 threshold). Automatically skipped when N > 20,000.
