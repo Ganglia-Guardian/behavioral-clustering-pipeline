@@ -54,7 +54,7 @@ DATASETS = [
         "raw_csv": LAB_DATA / "short_comparison_test" / "harp_data_cut.csv",
         "label":   "short_test",
         "arena":   "3d_wired",
-        "mcs":     15,      # HDBSCAN min_cluster_size
+        "mcs":     5,       # HDBSCAN min_cluster_size
         "ap_mcs":  15,      # AP preference auto
     },
     {
@@ -62,49 +62,49 @@ DATASETS = [
         "raw_csv": LAB_DATA / "comparison_test" / "Harp-Motion2025-04-07T08_22_29.csv",
         "label":   "comparison_test",
         "arena":   "3d_wired",
-        "mcs":     50,
+        "mcs":     15,
     },
     {
         "name":    "control_mouse_1_jul",
         "raw_csv": LAB_DATA / "mito_park_progression_test" / "control_mouse_1" / "Harp-Motion2025-07-07T15_17_33.csv",
         "label":   "control_jul",
         "arena":   "3d_wired",
-        "mcs":     80,
+        "mcs":     15,
     },
     {
         "name":    "control_mouse_1_oct",
         "raw_csv": LAB_DATA / "mito_park_progression_test" / "control_mouse_1" / "Harp-Motion2025-10-13T15_04_32.csv",
         "label":   "control_oct",
         "arena":   "3d_wired",
-        "mcs":     80,
+        "mcs":     15,
     },
     {
         "name":    "mp_mouse_1_jul",
         "raw_csv": LAB_DATA / "mito_park_progression_test" / "mp_mouse_1" / "Harp-Motion2025-07-08T08_36_38.csv",
         "label":   "mp_jul",
         "arena":   "3d_wired",
-        "mcs":     70,
+        "mcs":     15,
     },
     {
         "name":    "mp_mouse_1_oct",
         "raw_csv": LAB_DATA / "mito_park_progression_test" / "mp_mouse_1" / "Harp-Motion2025-10-13T07_36_52.csv",
         "label":   "mp_oct",
         "arena":   "3d_wired",
-        "mcs":     80,
+        "mcs":     15,
     },
     {
         "name":    "moving_test",
         "raw_csv": LAB_DATA / "moving_test" / "IMU" / "Harp-Motion2025-05-23T12_08_47.csv",
         "label":   "moving_test",
         "arena":   "3d_wired",
-        "mcs":     150,
+        "mcs":     15,
     },
     {
         "name":    "still_test",
         "raw_csv": LAB_DATA / "still_test" / "Harp-Motion2025-09-15T08_33_43.csv",
         "label":   "still_test",
         "arena":   "3d_wired",
-        "mcs":     80,
+        "mcs":     15,
     },
 ]
 
@@ -173,6 +173,40 @@ def load_data(cfg: dict, out_dir: Path) -> tuple:
     return hist, ts, folders, cdf, channel_sizes
 
 
+# ── Load cached result ────────────────────────────────────────────────────────
+
+def load_cached(out_path: Path, cdf: np.ndarray, N: int) -> dict | None:
+    """Read existing result CSV and recompute metrics. Returns None if unreadable."""
+    try:
+        df = pd.read_csv(out_path)
+        if len(df) != N:
+            return None
+        cluster_idx = df["ClusterIdx"].values.astype(int)
+        labels = np.where(cluster_idx == 0, -1, cluster_idx - 1)
+        stats  = cluster_stats(labels)
+        sil    = _silhouette(cdf, labels)
+        return {
+            "status":    "ok",
+            "n_windows": N,
+            "n_clusters": stats["n_clusters"],
+            "n_noise":    stats["n_noise"],
+            "noise_pct":  round(100 * stats["n_noise"] / N, 2),
+            "sil":        round(sil, 4) if not np.isnan(sil) else float("nan"),
+            "mean":       round(stats["mean"], 1),
+            "std":        round(stats["std"], 1),
+            "min":        stats["min"],
+            "max":        stats["max"],
+            "t_dist":     float("nan"),
+            "t_algo":     float("nan"),
+            "t_s":        float("nan"),
+            "preference": None,
+            "labels":     labels,
+            "cached":     True,
+        }
+    except Exception:
+        return None
+
+
 # ── Run one method ────────────────────────────────────────────────────────────
 
 def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
@@ -195,6 +229,10 @@ def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
                 labels = cluster_ap_sampled(hist, channel_sizes,
                                              sample_size=AP_SAMPLE_SIZE, _timing=_timing,
                                              preference=preference)
+            elif method == "ap_coreset":
+                labels = cluster_ap_sampled(hist, channel_sizes,
+                                             sample_size=AP_SAMPLE_SIZE, _timing=_timing,
+                                             preference=preference, use_coreset=True)
             elif method == "ap_sparse":
                 labels = cluster_ap_sparse_knn(hist, channel_sizes,
                                                 K=AP_SPARSE_K, _timing=_timing)
@@ -311,7 +349,7 @@ def write_comparison_report(all_rows: list, out_path: Path) -> None:
     lines.append(f"  ARI reference: ap_full")
 
     datasets = sorted(set(r["dataset"] for r in all_rows))
-    display_order = ["hdbscan", "ap_full", "ap_sampled", "ap_sparse", "ap_hierarchical"]
+    display_order = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_hierarchical"]
 
     for ds in datasets:
         lines.append("")
@@ -357,12 +395,32 @@ def write_comparison_report(all_rows: list, out_path: Path) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", nargs="*", metavar="METHOD",
+                        help="Force re-run. No args = re-run all. "
+                             "Specific methods: --force hdbscan ap_sampled")
+    args = parser.parse_args()
+
+    if args.force is None:
+        force_methods = set()          # cache mode: skip nothing
+    elif len(args.force) == 0:
+        force_methods = None           # None = force everything
+    else:
+        force_methods = set(args.force)
+
     print("=" * 62)
     print("  Method Comparison: HDBSCAN | AP full | AP sampled | AP sparse")
     print("=" * 62)
+    if force_methods is None:
+        print("  Cache: DISABLED (--force, re-running all methods)")
+    elif force_methods:
+        print(f"  Cache: force re-run for: {', '.join(sorted(force_methods))}")
+    else:
+        print("  Cache: ENABLED (use --force to re-run)")
 
     all_rows = []
-    methods  = ["hdbscan", "ap_full", "ap_sampled", "ap_sparse", "ap_hierarchical"]
+    methods  = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_hierarchical"]
 
     dataset_pbar = tqdm(DATASETS, desc="Datasets", unit="dataset", position=0)
     for cfg in dataset_pbar:
@@ -399,6 +457,24 @@ def main():
                     "note": f"N={N:,} exceeds AP_FULL_MAX_N={AP_FULL_MAX_N:,}",
                 })
                 continue
+
+            use_cache = (
+                force_methods is not None           # not --force (all)
+                and method not in (force_methods or set())  # not in forced list
+                and out_csv.exists()
+            )
+
+            if use_cache:
+                cached = load_cached(out_csv, cdf, N)
+                if cached is not None:
+                    cached["method"]  = method
+                    cached["dataset"] = cfg["name"]
+                    if method == "ap_full":
+                        ap_full_preference = cached.get("preference")
+                    dataset_results.append(cached)
+                    tqdm.write(f"\n  → {method} ... (cached)")
+                    tqdm.write("    " + _format_result(cached))
+                    continue
 
             tqdm.write(f"\n  → {method} ...")
             pref = ap_full_preference if (method == "ap_sampled" and ap_full_preference is not None) else None

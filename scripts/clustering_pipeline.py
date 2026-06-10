@@ -501,87 +501,46 @@ def _build_cdf_features(hist_matrix: np.ndarray, channel_sizes: list) -> np.ndar
 def cluster_hdbscan(hist_matrix: np.ndarray,
                     channel_sizes: list,
                     min_cluster_size: int = 15,
-                    n_neighbors: int = None,
                     _timing: dict = None) -> np.ndarray:
     """
-    Cluster behavioral windows with UMAP → HDBSCAN.
+    Cluster behavioral windows with HDBSCAN on 30-D CDF features.
 
-    Why two steps?
-
-    HDBSCAN on raw 396-dimensional histograms fails: in high dimensions all
-    pairwise distances converge toward the same value (curse of dimensionality),
-    so density estimation becomes unreliable and almost all points are labelled
-    noise.  UMAP first learns a low-dimensional (15-D) manifold that preserves
-    local neighbourhood structure; HDBSCAN then finds stable density peaks in
-    that compact embedding.
-
-    UMAP n_neighbors controls the global/local trade-off:
-      - Small n_neighbors (10–20) → fine local structure, many small clusters
-      - Large n_neighbors (40–80) → broader view, fewer but larger clusters
-    Default n_neighbors = min(50, N // 10) adapts to dataset size.
+    Runs HDBSCAN directly on the CDF feature matrix using L1 (Manhattan)
+    distance, which equals the Wasserstein-1 distance between per-channel
+    histograms — the same metric used by the AP methods.
 
     min_cluster_size controls granularity (analogous to AP preference):
-      - Lower  → more clusters (finer, like lowering AP preference)
+      - Lower  → more clusters (finer)
       - Higher → fewer clusters (coarser)
-    Default 15 gives ~10–20 clusters on a typical 5-min recording.
+    Default 15 gives ~10–50 clusters on a typical 5-min recording.
 
     Windows that do not belong to any dense region are labelled -1 (noise).
-    Unlike AP, HDBSCAN does not force every window into a cluster — these
-    points are genuine behavioural transitions or ambiguous movements.
 
     Parameters
     ----------
     min_cluster_size : minimum windows to form a cluster (default 15).
-    n_neighbors      : UMAP n_neighbors — controls local vs global structure.
-                       Small (10–20) → fine local detail, more clusters.
-                       Large (40–80) → broader structure, fewer clusters.
-                       Default None auto-selects: min(50, max(15, N // 20)).
 
     Returns
     -------
     labels : np.ndarray, shape (N_windows,)
              Integer cluster indices starting at 0; -1 = noise/outlier.
     """
-    import umap as umap_lib
-
     N = hist_matrix.shape[0]
-    print(f"[4/5] UMAP → HDBSCAN  (N={N:,}, min_cluster_size={min_cluster_size})")
+    print(f"[4/5] HDBSCAN  (N={N:,}, min_cluster_size={min_cluster_size})")
 
-    cdf_features = _build_cdf_features(hist_matrix, channel_sizes)
     t0 = time.time()
-
-    if n_neighbors is None:
-        # Auto: larger datasets can afford a broader neighbourhood;
-        # small recordings cap at 50 to avoid over-smoothing.
-        n_neighbors = min(50, max(15, N // 20))
-        print(f"      n_neighbors: {n_neighbors}  (auto — use --n-neighbors to override)")
-    else:
-        print(f"      n_neighbors: {n_neighbors}  (user-specified)")
-
-    n_components = 15
-    print(f"      UMAP: {cdf_features.shape[1]}-D → {n_components}-D  "
-          f"(n_neighbors={n_neighbors}, metric=L1) ...")
-
-    reducer = umap_lib.UMAP(
-        n_components = n_components,
-        n_neighbors  = n_neighbors,
-        min_dist     = 0.0,       # tight clusters in embedding space
-        metric       = "l1",      # L1 on CDF = Wasserstein-1 distance
-        random_state = 42,
-        low_memory   = N > 50_000,
-    )
-    embedding = reducer.fit_transform(cdf_features)
-    t_umap = time.time() - t0
-    print(f"      UMAP done in {t_umap:.1f}s")
+    cdf_features = _build_cdf_features(hist_matrix, channel_sizes)
+    t_dist = time.time() - t0
+    print(f"      CDF features: {cdf_features.shape[1]}-D  ({t_dist:.1f}s)")
 
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size         = min_cluster_size,
         min_samples              = max(1, min_cluster_size // 5),
-        metric                   = "euclidean",
+        metric                   = "l1",
         cluster_selection_method = "eom",
     )
-    labels = clusterer.fit_predict(embedding)
-    t_hdbscan = time.time() - t0 - t_umap
+    labels = clusterer.fit_predict(cdf_features)
+    t_algo = time.time() - t0 - t_dist
 
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise    = (labels == -1).sum()
@@ -589,9 +548,36 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
     print(f"      Clusters found : {n_clusters}")
     print(f"      Noise points   : {n_noise:,} ({100 * n_noise / len(labels):.1f}%)")
     if _timing is not None:
-        _timing['t_dist'] = round(t_umap, 2)
-        _timing['t_algo'] = round(t_hdbscan, 2)
+        _timing['t_dist'] = round(t_dist, 2)
+        _timing['t_algo'] = round(t_algo, 2)
     return labels
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AP shared helper — global preference estimation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _estimate_min_affinity(cdf_all: np.ndarray, n_pairs: int = 500_000) -> float:
+    """
+    Estimate global min(affinity) = -max(L1_dist²) by sampling random pairs.
+
+    AP preference = min(similarity) controls cluster count.  Using the sample
+    or block min underestimates the true global minimum (i.e. the value is
+    less negative), which biases AP toward too few clusters.  Sampling ~500k
+    random pairs from all N windows gives a tight lower-bound estimate in <1s
+    and is independent of any sub-sampling strategy used by the caller.
+    """
+    N = cdf_all.shape[0]
+    rng = np.random.default_rng(42)
+    i = rng.integers(0, N, n_pairs)
+    j = rng.integers(0, N, n_pairs)
+    # Avoid self-pairs (dist=0 which would underestimate max)
+    same = i == j
+    j[same] = (j[same] + 1) % N
+    dists = np.abs(
+        cdf_all[i].astype(np.float64) - cdf_all[j].astype(np.float64)
+    ).sum(axis=1)
+    return -float(dists.max() ** 2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -664,7 +650,7 @@ def cluster_ap_full(hist_matrix: np.ndarray,
         preference       = preference,
         damping          = 0.9,
         max_iter         = 1000,
-        convergence_iter = 100,
+        convergence_iter = 15,
         random_state     = 0,
     )
     labels = ap.fit_predict(affinity)
@@ -808,10 +794,10 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
     t_dist = time.time() - t_dist_start
 
     if preference is None:
-        # Use min(similarity): equivalent to Matlab's min(s(:,3)).
-        # median(-dist²) ≈ 0 with coarse bins → cluster explosion; min is correct.
-        preference = float(affinity.min())
-        print(f"      Preference: {preference:.4f}  (auto = min similarity)")
+        # Estimate global min(similarity) from all N windows, not just the sample.
+        # Using sample min underestimates global min → preference too high → too few clusters.
+        preference = _estimate_min_affinity(cdf_all)
+        print(f"      Preference: {preference:.4f}  (global min estimate from {N:,} windows)")
     else:
         print(f"      Preference: {preference:.4f}  (user-specified)")
 
@@ -823,7 +809,7 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
         preference       = preference,
         damping          = 0.9,
         max_iter         = 1000,
-        convergence_iter = 100,
+        convergence_iter = 15,
         random_state     = 0,
     )
     sample_labels = ap.fit_predict(affinity)
@@ -912,10 +898,19 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
           f"mean={int(block_sizes.mean())}")
 
     # ── Step 2: Full AP within each block ─────────────────────────────────────
+    # Level-1 preference: median(per-block affinity).
+    # Using global_pref (very negative) collapses each block to 1 exemplar — too few
+    # candidates for Level-2.  Using per-block min is too inconsistent across blocks.
+    # Median is sklearn's natural default and produces ~sqrt(N_block) exemplars per block,
+    # giving a healthy number of Level-2 candidates.
+    # Compute global preference now for Level-2 (matches ap_full's scale).
+    global_pref = preference if preference is not None else _estimate_min_affinity(cdf_all)
+    if preference is None:
+        print(f"      Global preference estimate (Level-2): {global_pref:.4f}")
+
     t_dist_total = 0.0
     t_ap_total   = 0.0
     candidate_indices = []
-    block_prefs  = []   # collect per-block preference for Level-2 scaling
 
     print(f"      Running AP in each block...")
     for b in tqdm(range(n_blocks), desc="      Blocks", unit="block", leave=False):
@@ -927,8 +922,8 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
         affinity = -(dist ** 2)
         t_dist_total += time.time() - td
 
-        pref_b = preference if preference is not None else float(affinity.min())
-        block_prefs.append(pref_b)
+        # per-block median: let AP naturally cluster at the local scale
+        pref_b = preference if preference is not None else float(np.median(affinity))
         np.fill_diagonal(affinity, pref_b)
 
         ta = time.time()
@@ -958,17 +953,12 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
     aff2     = -(dist2 ** 2)
     t_dist2  = time.time() - td2
 
-    # Level-2 preference: (170 / n_candidates)-th percentile of all pairwise distances.
-    # This adaptive formula keeps ~n_candidates closest pairs within the merge threshold,
-    # giving ~50-60% exemplar retention — matching ap_full cluster counts empirically:
-    #   17 candidates → p10  → 9 clusters  (short_comparison_test ap_full = 9)
-    #   76 candidates → p2.2 → 42 clusters (comparison_test ap_full = 44)
-    if preference is not None:
-        pref2 = preference
-    else:
-        upper_dists = dist2[np.triu_indices(len(candidates), k=1)]
-        pct = min(10.0, max(0.5, 170.0 / len(candidates)))
-        pref2 = -float(np.percentile(upper_dists, pct) ** 2)
+    # Level-2 preference: median(aff2).
+    # global_pref (= min over all N windows) is far too negative for the small candidate
+    # set → collapses everything to 1-3 clusters.  min(aff2) has the same problem for
+    # the candidate set.  Median is the sklearn default and operates at the local scale
+    # of the candidates, retaining roughly 50% of candidates as final exemplars.
+    pref2 = preference if preference is not None else float(np.median(aff2))
     np.fill_diagonal(aff2, pref2)
 
     ta2 = time.time()
@@ -1049,7 +1039,6 @@ def run_pipeline(input_csv:              str,
                  ann_k:                  int   = 100,
                  sparse_k:               int   = 100,
                  preference:             float = None,
-                 n_neighbors:            int   = None,
                  sample_size:            int   = 6000) -> None:
     """
     Full replacement for Matlab's VPAPPAxes.m.
@@ -1082,7 +1071,7 @@ def run_pipeline(input_csv:              str,
                                          preference=preference)
     else:
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
-                                 min_cluster_size, n_neighbors=n_neighbors)
+                                 min_cluster_size)
 
     # ── Silhouette Score ──────────────────────────────────────────────────────
     print("[5/5] Computing cluster quality (Silhouette Score)...")
@@ -1202,12 +1191,6 @@ def _build_parser() -> argparse.ArgumentParser:
              "Lower (more negative) → fewer clusters. "
              "Default: min(similarity matrix). Used with --use-ap or --use-ap-sampled.",
     )
-    p.add_argument(
-        "--n-neighbors", type=int, default=None,
-        help="UMAP n_neighbors (default: auto = min(50, max(15, N//20))). "
-             "Lower (10–20) → more clusters. Higher (40–80) → fewer clusters. "
-             "Only used without --use-ap or --use-ap-sampled.",
-    )
     return p
 
 
@@ -1226,6 +1209,5 @@ if __name__ == "__main__":
         ann_k                 = args.ann_k,
         sparse_k              = args.sparse_k,
         preference            = args.preference,
-        n_neighbors           = args.n_neighbors,
-        sample_size      = args.sample_size,
+        sample_size           = args.sample_size,
     )
