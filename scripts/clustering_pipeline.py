@@ -27,6 +27,8 @@ Usage:
 """
 
 import argparse
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -37,6 +39,34 @@ import faiss
 from scipy.signal import butter, filtfilt
 from scipy.ndimage import median_filter
 from tqdm import tqdm
+
+
+class _Spinner:
+    """Context manager: live spinner + elapsed time during silent sklearn calls."""
+    def __init__(self, msg: str):
+        self._msg    = msg
+        self._stop   = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def __enter__(self):
+        self._t0 = time.time()
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args):
+        self._stop.set()
+        self._thread.join()
+        sys.stdout.write(f"\r{' ' * (len(self._msg) + 15)}\r")
+        sys.stdout.flush()
+
+    def _run(self):
+        chars = '|/-\\'
+        i = 0
+        while not self._stop.wait(0.25):
+            elapsed = time.time() - self._t0
+            sys.stdout.write(f"\r{self._msg} {chars[i % 4]} {elapsed:.0f}s")
+            sys.stdout.flush()
+            i += 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -539,6 +569,7 @@ def cluster_hdbscan(hist_matrix: np.ndarray,
         metric                   = "l1",
         cluster_selection_method = "eom",
     )
+    print(f"      Fitting HDBSCAN...")
     labels = clusterer.fit_predict(cdf_features)
     t_algo = time.time() - t0 - t_dist
 
@@ -653,7 +684,9 @@ def cluster_ap_full(hist_matrix: np.ndarray,
         convergence_iter = 15,
         random_state     = 0,
     )
-    labels = ap.fit_predict(affinity)
+    print("      Running AP (max_iter=1000, convergence_iter=15)...")
+    with _Spinner("      AP"):
+        labels = ap.fit_predict(affinity)
     t_algo = time.time() - t0 - t_dist
 
     print(f"      AP done in {time.time() - t0:.1f}s  |  clusters: {len(set(labels))}")
@@ -668,6 +701,118 @@ def cluster_ap_full(hist_matrix: np.ndarray,
 # ─────────────────────────────────────────────────────────────────────────────
 # Coreset helper — Greedy K-Center (Gonzalez 1985)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _kmeans_sample(cdf_features: np.ndarray, K: int, seed: int = 42) -> np.ndarray:
+    """
+    Mini-batch K-means centroid sampling.
+
+    Runs Mini-batch K-means with k=K on all N windows, then maps each
+    centroid to the nearest real window via FAISS exact L1 search.
+    Guarantees one representative per "region" of the feature space,
+    and selects central (not boundary) points — better suited for AP
+    than Greedy K-Center coreset.
+
+    Parameters
+    ----------
+    cdf_features : float32 array (N, d)
+    K            : number of samples (= number of K-means clusters)
+    seed         : random seed
+
+    Returns
+    -------
+    selected : int64 array of shape (≤ K,) — indices into cdf_features
+               (may be < K if duplicate nearest-real-points are deduplicated)
+    """
+    from sklearn.cluster import MiniBatchKMeans
+
+    X = cdf_features.astype(np.float32)
+    N = X.shape[0]
+
+    print(f"      Running Mini-batch K-means (k={K:,}, N={N:,}) ...")
+    t0 = time.time()
+    km = MiniBatchKMeans(n_clusters=K, random_state=seed, n_init=3,
+                         batch_size=min(4096, N), max_iter=100)
+    km.fit(X)
+    centroids = km.cluster_centers_.astype(np.float32)   # (K, d)
+    print(f"      K-means done in {time.time() - t0:.1f}s")
+
+    # Map each centroid to the nearest real window (FAISS exact L1)
+    index = faiss.IndexFlat(X.shape[1], faiss.METRIC_L1)
+    index.add(X)
+    _, nn = index.search(centroids, 1)                   # (K, 1)
+    selected = np.unique(nn.ravel().astype(np.int64))    # deduplicate
+    return selected
+
+
+def _stratified_sample(cdf_features: np.ndarray, K: int,
+                        n_strata: int = 200, seed: int = 42) -> np.ndarray:
+    """
+    Two-stage stratified sampling for AP.
+
+    Stage 1: Mini-batch K-means with k=n_strata to partition all N windows
+             into rough behavioral groups.
+    Stage 2: Sample K // n_strata windows equally from each stratum, ensuring
+             rare behaviors (small clusters) have the same representation as
+             common ones.  Any deficit from small strata is filled with a
+             proportional top-up from the full pool.
+
+    Compared to random sampling, this guarantees that a cluster with only
+    20 windows is represented in the AP sample even if N >> sample_size.
+    This directly addresses the root cause of low ARI vs AP full.
+
+    Parameters
+    ----------
+    cdf_features : float32 array (N, d)
+    K            : total sample size (target; actual may be slightly smaller)
+    n_strata     : number of coarse K-means groups (default 200)
+    seed         : random seed
+
+    Returns
+    -------
+    selected : int64 array of shape (≤ K,) — indices into cdf_features
+    """
+    from sklearn.cluster import MiniBatchKMeans
+
+    X   = cdf_features.astype(np.float32)
+    N   = X.shape[0]
+    rng = np.random.default_rng(seed)
+
+    # Stage 1: coarse partition
+    n_strata = min(n_strata, N)
+    print(f"      Stratified: K-means k={n_strata} on {N:,} windows ...")
+    t0 = time.time()
+    km = MiniBatchKMeans(n_clusters=n_strata, random_state=seed, n_init=3,
+                         batch_size=min(4096, N), max_iter=100)
+    stratum_ids = km.fit_predict(X)
+    print(f"      Coarse clustering done in {time.time()-t0:.1f}s")
+
+    # Stage 2: equal sampling per stratum
+    per_stratum = max(1, K // n_strata)
+    selected    = []
+    deficit     = 0  # windows we couldn't take from small strata
+
+    for s in range(n_strata):
+        idx    = np.where(stratum_ids == s)[0]
+        n_take = min(len(idx), per_stratum)
+        deficit += per_stratum - n_take
+        chosen  = rng.choice(idx, n_take, replace=False)
+        selected.append(chosen)
+
+    selected = np.concatenate(selected)
+
+    # Fill deficit from the full pool (excluding already selected)
+    if deficit > 0:
+        already  = set(selected.tolist())
+        pool     = np.array([i for i in range(N) if i not in already], dtype=np.int64)
+        n_fill   = min(deficit, len(pool))
+        fill_idx = rng.choice(pool, n_fill, replace=False)
+        selected = np.concatenate([selected, fill_idx])
+
+    selected = np.sort(selected.astype(np.int64))
+    print(f"      Stratified sample: {len(selected):,} points "
+          f"({per_stratum} per stratum, {n_strata} strata)")
+    return selected
+
 
 def _coreset_sample(cdf_features: np.ndarray, K: int, seed: int = 0) -> np.ndarray:
     """
@@ -706,8 +851,8 @@ def _coreset_sample(cdf_features: np.ndarray, K: int, seed: int = 0) -> np.ndarr
     dist_to_S = np.sum(np.abs(X - X[first]), axis=1)   # (N,)
     dist_to_S[first] = 0.0
 
-    log_every = max(1, K // 5)
-    for step in range(1, K):
+    for step in tqdm(range(1, K), desc="      Coreset", unit="pt",
+                     leave=False, dynamic_ncols=True):
         new_center = int(np.argmax(dist_to_S))
         selected.append(new_center)
 
@@ -715,10 +860,6 @@ def _coreset_sample(cdf_features: np.ndarray, K: int, seed: int = 0) -> np.ndarr
         new_dists = np.sum(np.abs(X - X[new_center]), axis=1)
         np.minimum(dist_to_S, new_dists, out=dist_to_S)
         dist_to_S[new_center] = 0.0
-
-        if (step + 1) % log_every == 0 or step == K - 1:
-            print(f"      Coreset: {step+1:,}/{K:,}  "
-                  f"max-gap={dist_to_S.max():.3f}")
 
     return np.array(selected, dtype=np.int64)
 
@@ -728,7 +869,7 @@ def _coreset_sample(cdf_features: np.ndarray, K: int, seed: int = 0) -> np.ndarr
 
 def cluster_ap_sampled(hist_matrix: np.ndarray,
                        channel_sizes: list,
-                       sample_size: int = 6000,
+                       sample_size: int = 10000,
                        preference: float = None,
                        use_coreset: bool = False,
                        _timing: dict = None) -> np.ndarray:
@@ -741,7 +882,7 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
     1. Select min(sample_size, N) windows — randomly (default) or via
        Greedy K-Center coreset (--use-coreset-sample).
        Run full AP on this subset to find cluster exemplars.
-       sample_size=6000 → affinity matrix = 6000² × 8 bytes = 288 MB.
+       sample_size=10000 → affinity matrix = 10000² × 8 bytes = 800 MB.
 
     2. Assign every window to its nearest exemplar (FAISS exact L1).
 
@@ -812,7 +953,9 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
         convergence_iter = 15,
         random_state     = 0,
     )
-    sample_labels = ap.fit_predict(affinity)
+    print("      Running AP (max_iter=1000, convergence_iter=15)...")
+    with _Spinner("      AP"):
+        sample_labels = ap.fit_predict(affinity)
     n_clusters    = len(set(sample_labels))
     print(f"      AP on sample: {time.time()-t0:.1f}s  |  {n_clusters} clusters found")
 
@@ -836,7 +979,204 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5d — Hierarchical AP with FAISS k-means partitioning
+# Step 5d — AP with Mini-batch K-means centroid sampling  (experimental)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cluster_ap_kmeans_sampled(hist_matrix: np.ndarray,
+                              channel_sizes: list,
+                              sample_size: int = 10000,
+                              preference: float = None,
+                              _timing: dict = None) -> np.ndarray:
+    """
+    AP sampled variant using Mini-batch K-means centroid sampling.
+
+    Runs Mini-batch K-means with k=sample_size on all N windows, maps each
+    centroid to the nearest real window, then runs AP on those windows.
+    Compared to random sampling, this selects cluster-central points (not
+    boundary points), improving coverage of rare behaviors and ARI vs AP full.
+
+    Parameters
+    ----------
+    sample_size : K-means clusters / AP sample size (default 6,000).
+    preference  : AP preference. Default = global min estimate from all N windows.
+    """
+    from sklearn.cluster import AffinityPropagation
+    import scipy.spatial.distance as ssd
+
+    N = hist_matrix.shape[0]
+
+    if N <= sample_size:
+        print(f"[4/5] AP kmeans: N={N:,} ≤ sample_size={sample_size:,}, running full AP.")
+        return cluster_ap_full(hist_matrix, channel_sizes, preference=preference)
+
+    print(f"[4/5] AP kmeans-sampled  (N={N:,}, sample={sample_size:,}, "
+          f"{100*sample_size/N:.0f}% of data) ...")
+
+    cdf_all = _build_cdf_features(hist_matrix, channel_sizes)
+
+    t_samp = time.time()
+    sample_idx = _kmeans_sample(cdf_all.astype(np.float32), sample_size, seed=42)
+    t_samp = time.time() - t_samp
+    print(f"      K-means sample: {len(sample_idx):,} points in {t_samp:.1f}s")
+    if _timing is not None:
+        _timing['t_kmeans'] = round(t_samp, 2)
+
+    cdf_sample = cdf_all[sample_idx]
+
+    print(f"      Building {len(sample_idx)}×{len(sample_idx)} affinity matrix "
+          f"({len(sample_idx)**2*8/1e6:.0f} MB) ...")
+    t_dist_start = time.time()
+    dist     = ssd.cdist(cdf_sample, cdf_sample, metric="cityblock").astype(np.float64)
+    affinity = -(dist ** 2)
+    t_dist   = time.time() - t_dist_start
+
+    if preference is None:
+        preference = _estimate_min_affinity(cdf_all)
+        print(f"      Preference: {preference:.4f}  (global min estimate from {N:,} windows)")
+    else:
+        print(f"      Preference: {preference:.4f}  (user-specified)")
+
+    np.fill_diagonal(affinity, preference)
+
+    t0 = time.time()
+    ap = AffinityPropagation(
+        affinity         = "precomputed",
+        preference       = preference,
+        damping          = 0.9,
+        max_iter         = 1000,
+        convergence_iter = 15,
+        random_state     = 0,
+    )
+    print("      Running AP (max_iter=1000, convergence_iter=15)...")
+    with _Spinner("      AP"):
+        ap.fit(affinity)
+    t_algo = time.time() - t0
+
+    exemplar_indices = sample_idx[ap.cluster_centers_indices_]
+
+    if len(exemplar_indices) == 0:
+        print("      WARNING: no exemplars found; returning single cluster")
+        return np.zeros(N, dtype=int)
+
+    exemplar_cdf = cdf_all.astype(np.float32)[exemplar_indices]
+    index = faiss.IndexFlat(exemplar_cdf.shape[1], faiss.METRIC_L1)
+    index.add(exemplar_cdf)
+    _, assignments = index.search(cdf_all.astype(np.float32), 1)
+    labels = assignments.ravel().astype(int)
+
+    n_clusters = len(np.unique(labels))
+    print(f"      Clusters: {n_clusters}  |  T_sample: {t_samp:.1f}s  "
+          f"T_dist: {t_dist:.1f}s  T_algo: {t_algo:.1f}s")
+
+    if _timing is not None:
+        _timing['t_dist'] = round(t_dist, 2)
+        _timing['t_algo'] = round(t_algo, 2)
+    return labels
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5e — AP with two-stage stratified sampling  (experimental)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cluster_ap_stratified_sampled(hist_matrix: np.ndarray,
+                                   channel_sizes: list,
+                                   sample_size: int = 10000,
+                                   n_strata: int = 200,
+                                   preference: float = None,
+                                   _timing: dict = None) -> np.ndarray:
+    """
+    AP sampled with two-stage stratified sampling.
+
+    Runs Mini-batch K-means with k=n_strata to partition N windows into rough
+    behavioral groups, then draws an equal number of windows from each stratum.
+    This guarantees that rare behaviors (small clusters) are represented in the
+    AP sample regardless of their frequency, directly addressing the low-ARI
+    problem of random/coreset/kmeans sampling with small sample sizes.
+
+    Parameters
+    ----------
+    sample_size : total AP sample size (default 6,000).
+    n_strata    : coarse K-means clusters for stratification (default 200).
+    preference  : AP preference. Default = global min estimate from all N windows.
+    """
+    from sklearn.cluster import AffinityPropagation
+    import scipy.spatial.distance as ssd
+
+    N = hist_matrix.shape[0]
+
+    if N <= sample_size:
+        print(f"[4/5] AP stratified: N={N:,} ≤ sample_size={sample_size:,}, running full AP.")
+        return cluster_ap_full(hist_matrix, channel_sizes, preference=preference)
+
+    print(f"[4/5] AP stratified-sampled  (N={N:,}, sample={sample_size:,}, "
+          f"n_strata={n_strata}) ...")
+
+    cdf_all = _build_cdf_features(hist_matrix, channel_sizes)
+
+    t_samp  = time.time()
+    sample_idx = _stratified_sample(cdf_all.astype(np.float32),
+                                     sample_size, n_strata=n_strata, seed=42)
+    t_samp  = time.time() - t_samp
+    if _timing is not None:
+        _timing['t_stratified'] = round(t_samp, 2)
+
+    cdf_sample = cdf_all[sample_idx]
+    actual_size = len(sample_idx)
+
+    print(f"      Building {actual_size}×{actual_size} affinity matrix "
+          f"({actual_size**2*8/1e6:.0f} MB) ...")
+    t_dist_start = time.time()
+    dist     = ssd.cdist(cdf_sample, cdf_sample, metric="cityblock").astype(np.float64)
+    affinity = -(dist ** 2)
+    t_dist   = time.time() - t_dist_start
+
+    if preference is None:
+        preference = _estimate_min_affinity(cdf_all)
+        print(f"      Preference: {preference:.4f}  (global min estimate from {N:,} windows)")
+    else:
+        print(f"      Preference: {preference:.4f}  (user-specified)")
+
+    np.fill_diagonal(affinity, preference)
+
+    t0 = time.time()
+    ap = AffinityPropagation(
+        affinity         = "precomputed",
+        preference       = preference,
+        damping          = 0.9,
+        max_iter         = 1000,
+        convergence_iter = 15,
+        random_state     = 0,
+    )
+    print("      Running AP (max_iter=1000, convergence_iter=15)...")
+    with _Spinner("      AP"):
+        ap.fit(affinity)
+    t_algo = time.time() - t0
+
+    exemplar_indices = sample_idx[ap.cluster_centers_indices_]
+
+    if len(exemplar_indices) == 0:
+        print("      WARNING: no exemplars found; returning single cluster")
+        return np.zeros(N, dtype=int)
+
+    exemplar_cdf = cdf_all.astype(np.float32)[exemplar_indices]
+    index = faiss.IndexFlat(exemplar_cdf.shape[1], faiss.METRIC_L1)
+    index.add(exemplar_cdf)
+    _, assignments = index.search(cdf_all.astype(np.float32), 1)
+    labels = assignments.ravel().astype(int)
+
+    n_clusters = len(np.unique(labels))
+    print(f"      Clusters: {n_clusters}  |  T_sample: {t_samp:.1f}s  "
+          f"T_dist: {t_dist:.1f}s  T_algo: {t_algo:.1f}s")
+
+    if _timing is not None:
+        _timing['t_dist'] = round(t_dist, 2)
+        _timing['t_algo'] = round(t_algo, 2)
+    return labels
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5f — Hierarchical AP with FAISS k-means partitioning
 # ─────────────────────────────────────────────────────────────────────────────
 
 def cluster_ap_hierarchical(hist_matrix: np.ndarray,
@@ -970,7 +1310,9 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
         convergence_iter = 30,
         random_state     = 0,
     )
-    ap2.fit(aff2)
+    print(f"      Running AP Level-2 (max_iter=500)...")
+    with _Spinner("      AP L2"):
+        ap2.fit(aff2)
     t_ap2 = time.time() - ta2
 
     final_exemplar_idx = candidates[ap2.cluster_centers_indices_]
@@ -1036,11 +1378,14 @@ def run_pipeline(input_csv:              str,
                  use_ap_sparse:          bool  = False,
                  use_ap_hierarchical:    bool  = False,
                  use_hdbscan:            bool  = False,
+                 use_ap_kmeans:          bool  = False,
+                 use_ap_stratified:      bool  = False,
                  use_coreset:            bool  = False,
                  ann_k:                  int   = 100,
                  sparse_k:               int   = 100,
                  preference:             float = None,
-                 sample_size:            int   = 6000) -> None:
+                 sample_size:            int   = 6000,
+                 n_strata:               int   = 200) -> None:
     """
     Full replacement for Matlab's VPAPPAxes.m.
 
@@ -1069,6 +1414,15 @@ def run_pipeline(input_csv:              str,
     elif use_hdbscan:
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
                                  min_cluster_size)
+    elif use_ap_kmeans:
+        labels = cluster_ap_kmeans_sampled(hist_matrix, channel_sizes,
+                                           sample_size=sample_size,
+                                           preference=preference)
+    elif use_ap_stratified:
+        labels = cluster_ap_stratified_sampled(hist_matrix, channel_sizes,
+                                               sample_size=sample_size,
+                                               n_strata=n_strata,
+                                               preference=preference)
     else:
         # Default: AP sampled — works for any N, no density assumptions,
         # consistent with the Matlab AP pipeline.
@@ -1178,8 +1532,27 @@ def _build_parser() -> argparse.ArgumentParser:
              "production; see Known Limitations in README).",
     )
     p.add_argument(
-        "--sample-size", type=int, default=6000,
-        help="Number of windows to sample for AP sampled (default: 6000). "
+        "--use-ap-kmeans-sample", action="store_true",
+        help="Use AP with Mini-batch K-means centroid sampling (experimental). "
+             "Runs K-means on all N windows, maps centroids to nearest real windows, "
+             "then runs AP on that sample. Selects cluster-central points, improving "
+             "ARI vs AP full compared to random sampling.",
+    )
+    p.add_argument(
+        "--use-ap-stratified", action="store_true",
+        help="Use AP with two-stage stratified sampling (experimental). "
+             "Runs coarse K-means (--n-strata groups), then draws equal windows "
+             "from each group. Ensures rare behaviors are represented in the AP "
+             "sample regardless of frequency — designed to improve ARI vs AP full.",
+    )
+    p.add_argument(
+        "--n-strata", type=int, default=200,
+        help="Number of coarse K-means groups for stratified sampling (default: 200). "
+             "Only used with --use-ap-stratified.",
+    )
+    p.add_argument(
+        "--sample-size", type=int, default=10000,
+        help="Number of windows to sample for AP sampled (default: 10000). "
              "Only used with --use-ap-sampled.",
     )
     p.add_argument(
@@ -1214,9 +1587,12 @@ if __name__ == "__main__":
         use_ap_sparse         = args.use_ap_sparse,
         use_ap_hierarchical   = args.use_ap_hierarchical,
         use_hdbscan           = args.use_hdbscan,
+        use_ap_kmeans         = args.use_ap_kmeans_sample,
+        use_ap_stratified     = args.use_ap_stratified,
         use_coreset           = args.use_coreset_sample,
         ann_k                 = args.ann_k,
         sparse_k              = args.sparse_k,
         preference            = args.preference,
         sample_size           = args.sample_size,
+        n_strata              = args.n_strata,
     )

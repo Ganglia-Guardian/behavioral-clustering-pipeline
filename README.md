@@ -121,7 +121,7 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
 |---|---|---|
 | `--arena` | `3d_wired` | `3d_wired`, `3d_wireless`, `2d_wired`, `2d_wireless` |
 | `--min-cluster-size` | `15` | HDBSCAN — smaller → more clusters |
-| `--sample-size` | `6000` | AP sampled/coreset — windows passed to AP |
+| `--sample-size` | `10000` | AP sampled/coreset — windows passed to AP |
 | `--sparse-k` | `100` | Sparse AP — K-NN graph degree |
 | `--preference` | auto | AP methods — higher (toward 0) → more clusters |
 
@@ -171,7 +171,7 @@ Raw Harp CSV
     ▼  clustering
     │   cluster_hdbscan()        30-D CDF features, L1 metric → HDBSCAN
     │   cluster_ap_full()        N×N affinity → AP  (preference = global min)
-    │   cluster_ap_sampled()     6,000-sample → AP → FAISS assign  (random or coreset)
+    │   cluster_ap_sampled()     10,000-sample → AP → FAISS assign  (random or coreset)
     │   cluster_ap_sparse_knn()  FAISS K-NN graph → sparse AP → FAISS assign
     │
     ▼
@@ -192,13 +192,13 @@ AP full is the Matlab-equivalent reference (skipped when N > 20,000).
 | Dataset | N | HDBSCAN k | sil | AP full k | sil | AP sampled k | sil | AP coreset k | sil | AP sparse k | sil |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | short_comparison_test | 1,195 | 2 | 0.30 | 9 | 0.15 | 9 | 0.15 | 9 | 0.15 | 19 | 0.13 |
-| comparison_test | 13,799 | 7 | 0.26 | 33 | 0.15 | 23 | 0.13 | 24 | 0.13 | 75 | 0.12 |
-| mp_mouse_1_jul | 19,714 | 82 | 0.07 | 41 | 0.19 | 25 | 0.18 | 25 | **0.22** | 108 | 0.15 |
-| control_mouse_1_jul | 23,902 | 3 | **0.41** | — | — | 22 | 0.15 | 25 | 0.16 | 134 | 0.08 |
-| control_mouse_1_oct | 23,906 | 17 | 0.12 | — | — | 21 | 0.16 | 26 | 0.15 | 142 | 0.06 |
-| mp_mouse_1_oct | 23,866 | 207 | 0.36 | — | — | 24 | **0.24** | 25 | 0.18 | 145 | 0.13 |
-| still_test | 23,877 | 221 | 0.32 | — | — | 20 | 0.20 | 26 | 0.20 | 118 | 0.18 |
-| moving_test | 47,028 | 473 | **0.58** | — | — | 22 | **0.29** | 32 | **0.29** | 222 | 0.20 |
+| comparison_test | 13,799 | 7 | 0.26 | 33 | 0.15 | 30 | 0.14 | 30 | 0.13 | 75 | 0.12 |
+| mp_mouse_1_jul | 19,714 | 82 | 0.07 | 41 | 0.19 | 28 | 0.18 | 32 | **0.22** | 108 | 0.15 |
+| control_mouse_1_jul | 23,902 | 3 | **0.41** | — | — | 30 | 0.14 | 34 | 0.13 | 134 | 0.08 |
+| control_mouse_1_oct | 23,906 | 17 | 0.12 | — | — | 29 | 0.14 | 32 | **0.16** | 142 | 0.06 |
+| mp_mouse_1_oct | 23,866 | 207 | 0.36 | — | — | 30 | **0.22** | 34 | 0.21 | 145 | 0.13 |
+| still_test | 23,877 | 221 | 0.32 | — | — | 29 | 0.19 | 30 | 0.19 | 118 | 0.18 |
+| moving_test | 47,028 | 473 | **0.58** | — | — | 30 | 0.28 | 42 | **0.31** | 222 | 0.20 |
 
 ### Agreement with AP full (ARI)
 
@@ -207,21 +207,21 @@ ARI = 1.0 → identical; ARI ≈ 0 → no better than chance. Only available for
 | Dataset | HDBSCAN ARI | AP sampled ARI | AP coreset ARI | AP sparse ARI |
 |---|---|---|---|---|
 | short_comparison_test | 0.001 | **1.000** | **1.000** | 0.395 |
-| comparison_test | 0.004 | **0.389** | 0.338 | 0.351 |
-| mp_mouse_1_jul | 0.074 | **0.395** | 0.353 | 0.389 |
+| comparison_test | 0.004 | **0.425** | 0.403 | 0.351 |
+| mp_mouse_1_jul | 0.074 | **0.475** | 0.423 | 0.389 |
 
 ### Timing
 
 | Dataset | N | HDBSCAN | AP full | AP sampled | AP coreset | AP sparse |
 |---|---|---|---|---|---|---|
 | short_comparison_test | 1,195 | < 0.1 s | 0.6 s | 0.3 s | 0.2 s | 0.3 s |
-| comparison_test | 13,799 | 2.3 s | ~135 s | 9.9 s | 9.8 s | 16 s |
-| mp_mouse_1_jul | 19,714 | 1.7 s | ~390 s | 15.9 s | 10.3 s | 61 s |
-| control_mouse_1_jul | 23,902 | 3.9 s | — | 7.6 s | 10.1 s | 81 s |
-| control_mouse_1_oct | 23,906 | 2.8 s | — | 14.9 s | 12.0 s | 113 s |
-| mp_mouse_1_oct | 23,866 | 1.7 s | — | 9.6 s | 14.0 s | 190 s |
-| still_test | 23,877 | 1.7 s | — | 6.5 s | 8.8 s | 54 s |
-| moving_test | 47,028 | 5.7 s | — | 16.6 s | 10.5 s | 172 s |
+| comparison_test | 13,799 | 2.3 s | ~135 s | 30.3 s | 24.6 s | 16 s |
+| mp_mouse_1_jul | 19,714 | 1.7 s | ~390 s | 33.1 s | 29.2 s | 61 s |
+| control_mouse_1_jul | 23,902 | 3.9 s | — | 18.3 s | 26.3 s | 81 s |
+| control_mouse_1_oct | 23,906 | 2.8 s | — | 19.8 s | 24.7 s | 113 s |
+| mp_mouse_1_oct | 23,866 | 1.7 s | — | 34.1 s | 25.5 s | 190 s |
+| still_test | 23,877 | 1.7 s | — | 24.4 s | 30.5 s | 54 s |
+| moving_test | 47,028 | 5.7 s | — | 51.4 s | 35.1 s | 172 s |
 
 ---
 
@@ -231,4 +231,4 @@ ARI = 1.0 → identical; ARI ≈ 0 → no better than chance. Only available for
 
 **HDBSCAN noise sensitivity:** cluster count is highly sensitive to `--min-cluster-size` and no single value works well across all dataset sizes. Large datasets can produce hundreds of clusters with majority noise points (e.g. moving_test: 473 clusters / 54% noise). Retained as a reference method; AP methods are preferred for consistent segmentation.
 
-**AP full memory:** builds an N×N distance matrix and an N×N affinity matrix simultaneously (~6 GB at N=20,000). Automatically skipped when N > 20,000.
+**AP full memory:** requires 4 simultaneous N×N matrices (distance, affinity, and sklearn's internal R/A message matrices) — approximately 12 GB at N=20,000. Automatically skipped when N > 20,000.
