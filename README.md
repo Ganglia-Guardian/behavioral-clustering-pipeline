@@ -13,7 +13,6 @@ Output format matches the original Matlab pipeline — all existing visualizatio
 Python_Pipeline/
 ├── scripts/
 │   ├── clustering_pipeline.py   # Main pipeline
-│   ├── batch_run.py             # Run all datasets, generate summary report
 │   ├── batch_compare.py         # Compare all methods side by side
 │   ├── prepare_test_data.py     # Convert raw Harp CSV to pipeline-ready format
 │   └── compare_results.py       # Compare Python output against Matlab baseline
@@ -128,7 +127,6 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
 ### Batch runs
 
 ```bash
-.venv/bin/python3 scripts/batch_run.py                              # all datasets, summary report
 .venv/bin/python3 scripts/batch_compare.py                          # all methods, side-by-side comparison
 .venv/bin/python3 scripts/batch_compare.py --force ap_sampled       # re-run specific methods; others load from cache
 ```
