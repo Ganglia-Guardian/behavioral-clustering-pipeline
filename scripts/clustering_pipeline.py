@@ -1469,37 +1469,8 @@ def run_pipeline(input_csv:              str,
     result_df.to_csv(output_csv, index=False)
 
     elapsed = time.time() - t_start
-
-    # ── Save summary ──────────────────────────────────────────────────────────
-    import datetime
-    quality_str = (
-        "good" if not np.isnan(sil) and sil > 0.5 else
-        "reasonable" if not np.isnan(sil) and sil > 0.25 else
-        "poor" if not np.isnan(sil) else "N/A"
-    )
-    sil_str = f"{sil:.4f}  ({quality_str})" if not np.isnan(sil) else "N/A (< 2 clusters)"
-    noise_str = f"{n_noise:,}  ({100*n_noise/N_windows:.1f}%)" if n_noise else "0  (0.0%)"
-
-    summary_path = str(Path(output_csv).with_suffix("")) + "_summary.txt"
-    with open(summary_path, "w") as f:
-        f.write("=" * 62 + "\n")
-        f.write("  Clustering Run Summary\n")
-        f.write(f"  {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        f.write("=" * 62 + "\n")
-        f.write(f"  Input    : {input_csv}\n")
-        f.write(f"  Method   : {method_name}\n")
-        f.write(f"  Arena    : {arena}\n")
-        f.write("-" * 62 + "\n")
-        f.write(f"  Windows  : {N_windows:,}\n")
-        f.write(f"  Clusters : {n_clusters}\n")
-        f.write(f"  Noise    : {noise_str}\n")
-        f.write(f"  Silhouette: {sil_str}\n")
-        f.write(f"  Time     : {elapsed:.1f} s\n")
-        f.write("=" * 62 + "\n")
-
     print(f"\nDone. Total time: {elapsed / 60:.1f} min")
     print(f"Saved to        : {output_csv}")
-    print(f"Summary         : {summary_path}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
