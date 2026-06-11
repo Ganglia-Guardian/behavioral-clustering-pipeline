@@ -888,7 +888,7 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
 
     Parameters
     ----------
-    sample_size  : number of windows to pass to AP (default 6,000).
+    sample_size  : number of windows to pass to AP (default 10,000).
     preference   : AP preference — controls cluster count.
                    Default None uses min(affinity).
     use_coreset  : if True, use Greedy K-Center instead of random sampling.
@@ -997,7 +997,7 @@ def cluster_ap_kmeans_sampled(hist_matrix: np.ndarray,
 
     Parameters
     ----------
-    sample_size : K-means clusters / AP sample size (default 6,000).
+    sample_size : K-means clusters / AP sample size (default 10,000).
     preference  : AP preference. Default = global min estimate from all N windows.
     """
     from sklearn.cluster import AffinityPropagation
@@ -1096,7 +1096,7 @@ def cluster_ap_stratified_sampled(hist_matrix: np.ndarray,
 
     Parameters
     ----------
-    sample_size : total AP sample size (default 6,000).
+    sample_size : total AP sample size (default 10,000).
     n_strata    : coarse K-means clusters for stratification (default 200).
     preference  : AP preference. Default = global min estimate from all N windows.
     """
@@ -1384,7 +1384,7 @@ def run_pipeline(input_csv:              str,
                  ann_k:                  int   = 100,
                  sparse_k:               int   = 100,
                  preference:             float = None,
-                 sample_size:            int   = 6000,
+                 sample_size:            int   = 10000,
                  n_strata:               int   = 200) -> None:
     """
     Full replacement for Matlab's VPAPPAxes.m.
@@ -1403,34 +1403,27 @@ def run_pipeline(input_csv:              str,
     N_windows     = hist_matrix.shape[0]
 
     if use_ap:
-        method_name = "ap_full"
         labels = cluster_ap_full(hist_matrix, channel_sizes,
                                    K=ann_k, preference=preference)
     elif use_ap_sparse:
-        method_name = "ap_sparse"
         labels = cluster_ap_sparse_knn(hist_matrix, channel_sizes,
                                        K=sparse_k, preference=preference)
     elif use_ap_hierarchical:
-        method_name = "ap_hierarchical"
         labels = cluster_ap_hierarchical(hist_matrix, channel_sizes,
                                          preference=preference)
     elif use_hdbscan:
-        method_name = "hdbscan"
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
                                  min_cluster_size)
     elif use_ap_kmeans:
-        method_name = "ap_kmeans"
         labels = cluster_ap_kmeans_sampled(hist_matrix, channel_sizes,
                                            sample_size=sample_size,
                                            preference=preference)
     elif use_ap_stratified:
-        method_name = "ap_stratified"
         labels = cluster_ap_stratified_sampled(hist_matrix, channel_sizes,
                                                sample_size=sample_size,
                                                n_strata=n_strata,
                                                preference=preference)
     else:
-        method_name = "ap_coreset" if use_coreset else "ap_sampled"
         labels = cluster_ap_sampled(hist_matrix, channel_sizes,
                                     sample_size=sample_size, preference=preference,
                                     use_coreset=use_coreset)
