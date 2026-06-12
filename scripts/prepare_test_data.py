@@ -183,6 +183,7 @@ def convert(input_path: str, output_path: str, label: str) -> dict:
 
     # Step 6 — write Folder_Name at column 13 then recombine with non-motion rows
     col13 = col_names[13]
+    cleaned_motion[col13] = cleaned_motion[col13].astype(object)
     cleaned_motion[col13] = label
 
     combined = pd.concat([other_df, cleaned_motion], ignore_index=True)
