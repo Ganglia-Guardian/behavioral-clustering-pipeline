@@ -40,7 +40,7 @@ from clustering_pipeline import (
     load_cleaned_motion, process_motion,
     extract_histogram_features, ARENA_BIN_EDGES,
     cluster_hdbscan, cluster_ap_full, cluster_ap_sampled,
-    cluster_ap_sparse_knn, cluster_ap_hierarchical,
+    cluster_ap_sparse_knn, cluster_ap_twolevel,
     cluster_ap_kmeans_sampled, cluster_ap_stratified_sampled,
     _build_cdf_features, _silhouette, WIN_SIZE,
 )
@@ -237,8 +237,8 @@ def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
             elif method == "ap_sparse":
                 labels = cluster_ap_sparse_knn(hist, channel_sizes,
                                                 K=AP_SPARSE_K, _timing=_timing)
-            elif method == "ap_hierarchical":
-                labels = cluster_ap_hierarchical(hist, channel_sizes, _timing=_timing)
+            elif method == "ap_twolevel":
+                labels = cluster_ap_twolevel(hist, channel_sizes, _timing=_timing)
             elif method == "ap_kmeans":
                 labels = cluster_ap_kmeans_sampled(hist, channel_sizes,
                                                    sample_size=AP_SAMPLE_SIZE, _timing=_timing,
@@ -358,7 +358,7 @@ def write_comparison_report(all_rows: list, out_path: Path) -> None:
     lines.append(f"  ARI reference: ap_full")
 
     datasets = sorted(set(r["dataset"] for r in all_rows))
-    display_order = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_hierarchical", "ap_kmeans", "ap_stratified"]
+    display_order = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_twolevel", "ap_kmeans", "ap_stratified"]
 
     for ds in datasets:
         lines.append("")
@@ -429,7 +429,7 @@ def main():
         print("  Cache: ENABLED (use --force to re-run)")
 
     all_rows = []
-    methods  = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_hierarchical", "ap_kmeans", "ap_stratified"]
+    methods  = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_twolevel", "ap_kmeans", "ap_stratified"]
 
     dataset_pbar = tqdm(DATASETS, desc="Datasets", unit="dataset", position=0)
     for cfg in dataset_pbar:

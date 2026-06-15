@@ -1176,16 +1176,16 @@ def cluster_ap_stratified_sampled(hist_matrix: np.ndarray,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 5f — Hierarchical AP with FAISS k-means partitioning
+# Step 5f — Two-level AP with FAISS k-means partitioning
 # ─────────────────────────────────────────────────────────────────────────────
 
-def cluster_ap_hierarchical(hist_matrix: np.ndarray,
+def cluster_ap_twolevel(hist_matrix: np.ndarray,
                              channel_sizes: list,
                              n_blocks: int = None,
                              preference: float = None,
                              _timing: dict = None) -> np.ndarray:
     """
-    Two-level hierarchical AP using FAISS k-means partitioning.
+    Two-level AP using FAISS k-means partitioning.
 
     Addresses the coverage limitation of ap_sampled (which only uses ~6000
     windows regardless of N) without the O(N²) cost of full AP.
@@ -1219,7 +1219,7 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
     if n_blocks is None:
         n_blocks = max(4, N // 2500)
 
-    print(f"[4/5] Hierarchical AP  (N={N:,}, M={n_blocks} blocks, "
+    print(f"[4/5] Two-level AP  (N={N:,}, M={n_blocks} blocks, "
           f"~{N // n_blocks:,} windows/block)")
 
     cdf_all = _build_cdf_features(hist_matrix, channel_sizes).astype(np.float32)
@@ -1280,7 +1280,7 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
 
         candidate_indices.append(idx[ap.cluster_centers_indices_])
 
-    candidates = np.concatenate(candidate_indices)
+    candidates = np.unique(np.concatenate(candidate_indices))
     print(f"      Level-1 done: {len(candidates)} candidate exemplars  "
           f"(dist={t_dist_total:.1f}s  AP={t_ap_total:.1f}s)")
 
@@ -1295,9 +1295,8 @@ def cluster_ap_hierarchical(hist_matrix: np.ndarray,
 
     # Level-2 preference: median(aff2).
     # global_pref (= min over all N windows) is far too negative for the small candidate
-    # set → collapses everything to 1-3 clusters.  min(aff2) has the same problem for
-    # the candidate set.  Median is the sklearn default and operates at the local scale
-    # of the candidates, retaining roughly 50% of candidates as final exemplars.
+    # set → collapses everything to 1-3 clusters.  Median operates at the candidate
+    # scale, retaining roughly 50% of candidates as final exemplars.
     pref2 = preference if preference is not None else float(np.median(aff2))
     np.fill_diagonal(aff2, pref2)
 
@@ -1376,7 +1375,7 @@ def run_pipeline(input_csv:              str,
                  use_ap:                 bool  = False,
                  use_ap_sampled:         bool  = False,
                  use_ap_sparse:          bool  = False,
-                 use_ap_hierarchical:    bool  = False,
+                 use_ap_twolevel:    bool  = False,
                  use_hdbscan:            bool  = False,
                  use_ap_kmeans:          bool  = False,
                  use_ap_stratified:      bool  = False,
@@ -1408,8 +1407,8 @@ def run_pipeline(input_csv:              str,
     elif use_ap_sparse:
         labels = cluster_ap_sparse_knn(hist_matrix, channel_sizes,
                                        K=sparse_k, preference=preference)
-    elif use_ap_hierarchical:
-        labels = cluster_ap_hierarchical(hist_matrix, channel_sizes,
+    elif use_ap_twolevel:
+        labels = cluster_ap_twolevel(hist_matrix, channel_sizes,
                                          preference=preference)
     elif use_hdbscan:
         labels = cluster_hdbscan(hist_matrix, channel_sizes,
@@ -1518,8 +1517,8 @@ def _build_parser() -> argparse.ArgumentParser:
              "without the N² memory wall. Use --sparse-k to set graph degree (default: 100).",
     )
     p.add_argument(
-        "--use-ap-hierarchical", action="store_true",
-        help="Use two-level hierarchical AP: partition into blocks via FAISS k-means, "
+        "--use-ap-twolevel", action="store_true",
+        help="Use two-level AP: partition into blocks via FAISS k-means, "
              "run AP on each block, then AP on block exemplars. "
              "Fastest AP-family method; suitable for any N.",
     )
@@ -1582,7 +1581,7 @@ if __name__ == "__main__":
         use_ap                = args.use_ap,
         use_ap_sampled        = args.use_ap_sampled,
         use_ap_sparse         = args.use_ap_sparse,
-        use_ap_hierarchical   = args.use_ap_hierarchical,
+        use_ap_twolevel   = args.use_ap_twolevel,
         use_hdbscan           = args.use_hdbscan,
         use_ap_kmeans         = args.use_ap_kmeans_sample,
         use_ap_stratified     = args.use_ap_stratified,

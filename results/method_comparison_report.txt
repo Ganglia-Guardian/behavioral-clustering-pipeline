@@ -1,6 +1,6 @@
 =====================================================================================
   Method Comparison Report
-  Generated: 2026-06-11 11:36
+  Generated: 2026-06-14 22:14
 =====================================================================================
   AP preference: min(similarity)  [matches Matlab AccelCluster, min(s(:,3))]
   Silhouette: >0.5 good | 0.25–0.5 reasonable | <0.25 poor
@@ -13,12 +13,12 @@
   ---------------------------------------------------------------------------------
   hdbscan       7         7.2%    0.2569      reasonable  0.0042          nan      
   ap_full       33        0.0%    0.1479      poor        —               nan      
-  ap_sampled    30        0.0%    0.1357      poor        0.4249          30.25    
-  ap_coreset    30        0.0%    0.1291      poor        0.4033          24.63    
+  ap_sampled    30        0.0%    0.1357      poor        0.4249          nan      
+  ap_coreset    30        0.0%    0.1291      poor        0.4033          nan      
   ap_sparse     75        0.0%    0.1168      poor        0.3505          nan      
-  ap_hierarchical33        0.0%    0.1487      poor        0.3472          nan      
-  ap_kmeans     21        0.0%    0.1334      poor        0.3935          nan      
-  ap_stratified 27        0.0%    0.1413      poor        0.3778          nan      
+  ap_twolevel   33        0.0%    0.1487      poor        0.3475          16.79    
+  ap_kmeans     29        0.0%    0.1377      poor        0.4583          nan      
+  ap_stratified 34        0.0%    0.1511      poor        0.4437          nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   control_mouse_1_jul  (N = 23,902 windows)
@@ -27,12 +27,12 @@
   ---------------------------------------------------------------------------------
   hdbscan       3         0.8%    0.4084      reasonable  —               nan      
   ap_full       —         —       —           skipped     —               —        
-  ap_sampled    30        0.0%    0.1394      poor        —               18.34    
-  ap_coreset    34        0.0%    0.1348      poor        —               26.32    
+  ap_sampled    30        0.0%    0.1394      poor        —               nan      
+  ap_coreset    34        0.0%    0.1348      poor        —               nan      
   ap_sparse     134       0.0%    0.0849      poor        —               nan      
-  ap_hierarchical48        0.0%    0.1275      poor        —               nan      
-  ap_kmeans     21        0.0%    0.1577      poor        —               nan      
-  ap_stratified 25        0.0%    0.1540      poor        —               nan      
+  ap_twolevel   48        0.0%    0.1275      poor        —               28.5     
+  ap_kmeans     29        0.0%    0.1305      poor        —               nan      
+  ap_stratified 35        0.0%    0.1509      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   control_mouse_1_oct  (N = 23,906 windows)
@@ -41,12 +41,12 @@
   ---------------------------------------------------------------------------------
   hdbscan       17        21.4%   0.1207      poor        —               nan      
   ap_full       —         —       —           skipped     —               —        
-  ap_sampled    29        0.0%    0.1375      poor        —               19.8     
-  ap_coreset    32        0.0%    0.1553      poor        —               24.66    
+  ap_sampled    29        0.0%    0.1375      poor        —               nan      
+  ap_coreset    32        0.0%    0.1553      poor        —               nan      
   ap_sparse     142       0.0%    0.0594      poor        —               nan      
-  ap_hierarchical46        0.0%    0.1291      poor        —               nan      
-  ap_kmeans     24        0.0%    0.1430      poor        —               nan      
-  ap_stratified 26        0.0%    0.1522      poor        —               nan      
+  ap_twolevel   46        0.0%    0.1295      poor        —               35.15    
+  ap_kmeans     28        0.0%    0.1452      poor        —               nan      
+  ap_stratified 36        0.0%    0.1303      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   moving_test  (N = 47,028 windows)
@@ -55,12 +55,12 @@
   ---------------------------------------------------------------------------------
   hdbscan       473       54.4%   0.5797      good        —               nan      
   ap_full       —         —       —           skipped     —               —        
-  ap_sampled    30        0.0%    0.2786      reasonable  —               51.38    
-  ap_coreset    42        0.0%    0.3133      reasonable  —               35.07    
+  ap_sampled    30        0.0%    0.2786      reasonable  —               nan      
+  ap_coreset    42        0.0%    0.3133      reasonable  —               nan      
   ap_sparse     222       0.0%    0.2025      poor        —               nan      
-  ap_hierarchical32        0.0%    0.2348      poor        —               nan      
-  ap_kmeans     25        0.0%    0.2354      poor        —               nan      
-  ap_stratified 32        0.0%    0.2412      poor        —               nan      
+  ap_twolevel   32        0.0%    0.2348      poor        —               70.47    
+  ap_kmeans     32        0.0%    0.2645      reasonable  —               nan      
+  ap_stratified 42        0.0%    0.2614      reasonable  —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   mp_mouse_1_jul  (N = 19,714 windows)
@@ -69,12 +69,12 @@
   ---------------------------------------------------------------------------------
   hdbscan       82        59.4%   0.0713      poor        0.0735          nan      
   ap_full       41        0.0%    0.1934      poor        —               nan      
-  ap_sampled    28        0.0%    0.1790      poor        0.4748          33.08    
-  ap_coreset    32        0.0%    0.2246      poor        0.4234          29.2     
+  ap_sampled    28        0.0%    0.1790      poor        0.4748          nan      
+  ap_coreset    32        0.0%    0.2246      poor        0.4234          nan      
   ap_sparse     108       0.0%    0.1532      poor        0.3890          nan      
-  ap_hierarchical38        0.0%    0.1974      poor        0.4372          nan      
-  ap_kmeans     21        0.0%    0.2286      poor        0.3655          nan      
-  ap_stratified 23        0.0%    0.2142      poor        0.3262          nan      
+  ap_twolevel   38        0.0%    0.1974      poor        0.4368          25.62    
+  ap_kmeans     27        0.0%    0.2176      poor        0.4594          nan      
+  ap_stratified 33        0.0%    0.2040      poor        0.4617          nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   mp_mouse_1_oct  (N = 23,866 windows)
@@ -83,12 +83,12 @@
   ---------------------------------------------------------------------------------
   hdbscan       207       63.2%   0.3594      reasonable  —               nan      
   ap_full       —         —       —           skipped     —               —        
-  ap_sampled    30        0.0%    0.2174      poor        —               34.07    
-  ap_coreset    34        0.0%    0.2071      poor        —               25.48    
+  ap_sampled    30        0.0%    0.2174      poor        —               nan      
+  ap_coreset    34        0.0%    0.2071      poor        —               nan      
   ap_sparse     145       0.0%    0.1348      poor        —               nan      
-  ap_hierarchical33        0.0%    0.2086      poor        —               nan      
-  ap_kmeans     23        0.0%    0.2195      poor        —               nan      
-  ap_stratified 29        0.0%    0.2358      poor        —               nan      
+  ap_twolevel   33        0.0%    0.2086      poor        —               28.13    
+  ap_kmeans     31        0.0%    0.2121      poor        —               nan      
+  ap_stratified 38        0.0%    0.2206      poor        —               nan      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   short_comparison_test  (N = 1,195 windows)
@@ -97,10 +97,10 @@
   ---------------------------------------------------------------------------------
   hdbscan       2         2.3%    0.3024      reasonable  0.0012          nan      
   ap_full       9         0.0%    0.1520      poor        —               nan      
-  ap_sampled    9         0.0%    0.1520      poor        1.0000          0.26     
-  ap_coreset    9         0.0%    0.1520      poor        1.0000          0.21     
+  ap_sampled    9         0.0%    0.1520      poor        1.0000          nan      
+  ap_coreset    9         0.0%    0.1520      poor        1.0000          nan      
   ap_sparse     19        0.0%    0.1328      poor        0.3949          nan      
-  ap_hierarchical11        0.0%    0.1599      poor        0.5484          nan      
+  ap_twolevel   11        0.0%    0.1599      poor        0.5484          0.16     
   ap_kmeans     9         0.0%    0.1520      poor        1.0000          nan      
   ap_stratified 9         0.0%    0.1520      poor        1.0000          nan      
 
@@ -111,11 +111,11 @@
   ---------------------------------------------------------------------------------
   hdbscan       221       65.9%   0.3170      reasonable  —               nan      
   ap_full       —         —       —           skipped     —               —        
-  ap_sampled    29        0.0%    0.1918      poor        —               24.42    
-  ap_coreset    30        0.0%    0.1860      poor        —               30.48    
+  ap_sampled    29        0.0%    0.1918      poor        —               nan      
+  ap_coreset    30        0.0%    0.1860      poor        —               nan      
   ap_sparse     118       0.0%    0.1789      poor        —               nan      
-  ap_hierarchical36        0.0%    0.1683      poor        —               nan      
-  ap_kmeans     21        0.0%    0.1940      poor        —               nan      
-  ap_stratified 25        0.0%    0.1899      poor        —               nan      
+  ap_twolevel   36        0.0%    0.1684      poor        —               25.96    
+  ap_kmeans     28        0.0%    0.1859      poor        —               nan      
+  ap_stratified 32        0.0%    0.1900      poor        —               nan      
 
 =====================================================================================

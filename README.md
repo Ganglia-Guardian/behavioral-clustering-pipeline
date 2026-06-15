@@ -29,6 +29,7 @@ Python_Pipeline/
         ├── Cluster_detail_results_ap_full.csv
         ├── Cluster_detail_results_ap_sampled.csv
         ├── Cluster_detail_results_ap_coreset.csv
+        ├── Cluster_detail_results_ap_twolevel.csv
         └── Cluster_detail_results_ap_sparse.csv
 ```
 
@@ -84,11 +85,11 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
     --output path/to/Cluster_detail_results.csv \
     --use-ap-sampled --use-coreset-sample
 
-# AP hierarchical (two-level AP; experimental)
+# AP two-level (two-level AP; experimental)
 .venv/bin/python3 scripts/clustering_pipeline.py \
     --input  path/to/combined_harp_data_cleaned.csv \
     --output path/to/Cluster_detail_results.csv \
-    --use-ap-hierarchical
+    --use-ap-twolevel
 
 # Sparse AP
 .venv/bin/python3 scripts/clustering_pipeline.py \
@@ -107,10 +108,10 @@ Skip this if you already have `combined_harp_data_cleaned.csv`.
 
 | Method | Flag | Notes |
 |---|---|---|
-| AP sampled | *(default)* | Recommended for all N; scales to large datasets |
+| AP sampled | *(default)* | Recommended for all N; highest ARI vs AP full |
 | AP full | `--use-ap` | Closest to Matlab; N ≤ 20,000 only |
-| AP coreset | `--use-ap-sampled --use-coreset-sample` | Greedy K-Center subset; better rare-behavior coverage than random |
-| AP hierarchical | `--use-ap-hierarchical` | Two-level AP; experimental — results may vary |
+| AP coreset | `--use-ap-sampled --use-coreset-sample` | Greedy K-Center subset; best silhouette on large N |
+| AP two-level | `--use-ap-twolevel` | Two-level AP; cluster count closest to AP full |
 | Sparse AP | `--use-ap-sparse` | See [Known Limitations](#known-limitations) |
 | HDBSCAN | `--use-hdbscan` | Reference only — not recommended for production; see [Known Limitations](#known-limitations) |
 
@@ -187,39 +188,41 @@ AP full is the Matlab-equivalent reference (skipped when N > 20,000).
 
 ### Cluster counts and Silhouette scores
 
-| Dataset | N | HDBSCAN k | sil | AP full k | sil | AP sampled k | sil | AP coreset k | sil | AP sparse k | sil |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| short_comparison_test | 1,195 | 2 | 0.30 | 9 | 0.15 | 9 | 0.15 | 9 | 0.15 | 19 | 0.13 |
-| comparison_test | 13,799 | 7 | 0.26 | 33 | 0.15 | 30 | 0.14 | 30 | 0.13 | 75 | 0.12 |
-| mp_mouse_1_jul | 19,714 | 82 | 0.07 | 41 | 0.19 | 28 | 0.18 | 32 | **0.22** | 108 | 0.15 |
-| control_mouse_1_jul | 23,902 | 3 | **0.41** | — | — | 30 | 0.14 | 34 | 0.13 | 134 | 0.08 |
-| control_mouse_1_oct | 23,906 | 17 | 0.12 | — | — | 29 | 0.14 | 32 | **0.16** | 142 | 0.06 |
-| mp_mouse_1_oct | 23,866 | 207 | 0.36 | — | — | 30 | **0.22** | 34 | 0.21 | 145 | 0.13 |
-| still_test | 23,877 | 221 | 0.32 | — | — | 29 | 0.19 | 30 | 0.19 | 118 | 0.18 |
-| moving_test | 47,028 | 473 | **0.58** | — | — | 30 | 0.28 | 42 | **0.31** | 222 | 0.20 |
+`k` = number of clusters found; `sil` = Silhouette score (higher is better; >0.5 good, 0.25–0.5 reasonable, <0.25 poor).
+
+| Dataset | N | HDBSCAN k | sil | AP full k | sil | AP sampled k | sil | AP coreset k | sil | AP two-level k | sil | AP sparse k | sil |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| short_comparison_test | 1,195 | 2 | 0.30 | 9 | 0.15 | 9 | 0.15 | 9 | 0.15 | 11 | 0.16 | 19 | 0.13 |
+| comparison_test | 13,799 | 7 | 0.26 | 33 | 0.15 | 30 | 0.14 | 30 | 0.13 | 33 | 0.15 | 75 | 0.12 |
+| mp_mouse_1_jul | 19,714 | 82 | 0.07 | 41 | 0.19 | 28 | 0.18 | 32 | **0.22** | 38 | 0.20 | 108 | 0.15 |
+| control_mouse_1_jul | 23,902 | 3 | **0.41** | — | — | 30 | 0.14 | 34 | 0.13 | 48 | 0.13 | 134 | 0.08 |
+| control_mouse_1_oct | 23,906 | 17 | 0.12 | — | — | 29 | 0.14 | 32 | **0.16** | 46 | 0.13 | 142 | 0.06 |
+| mp_mouse_1_oct | 23,866 | 207 | 0.36 | — | — | 30 | **0.22** | 34 | 0.21 | 33 | 0.21 | 145 | 0.13 |
+| still_test | 23,877 | 221 | 0.32 | — | — | 29 | 0.19 | 30 | 0.19 | 36 | 0.17 | 118 | 0.18 |
+| moving_test | 47,028 | 473 | **0.58** | — | — | 30 | 0.28 | 42 | **0.31** | 32 | 0.23 | 222 | 0.20 |
 
 ### Agreement with AP full (ARI)
 
 ARI = 1.0 → identical; ARI ≈ 0 → no better than chance. Only available for N ≤ 20,000.
 
-| Dataset | HDBSCAN ARI | AP sampled ARI | AP coreset ARI | AP sparse ARI |
-|---|---|---|---|---|
-| short_comparison_test | 0.001 | **1.000** | **1.000** | 0.395 |
-| comparison_test | 0.004 | **0.425** | 0.403 | 0.351 |
-| mp_mouse_1_jul | 0.074 | **0.475** | 0.423 | 0.389 |
+| Dataset | HDBSCAN ARI | AP sampled ARI | AP coreset ARI | AP two-level ARI | AP sparse ARI |
+|---|---|---|---|---|---|
+| short_comparison_test | 0.001 | **1.000** | **1.000** | 0.548 | 0.395 |
+| comparison_test | 0.004 | **0.425** | 0.403 | 0.347 | 0.350 |
+| mp_mouse_1_jul | 0.073 | **0.475** | 0.423 | 0.437 | 0.389 |
 
 ### Timing
 
-| Dataset | N | HDBSCAN | AP full | AP sampled | AP coreset | AP sparse |
-|---|---|---|---|---|---|---|
-| short_comparison_test | 1,195 | < 0.1 s | 0.6 s | 0.3 s | 0.2 s | 0.3 s |
-| comparison_test | 13,799 | 2.3 s | ~135 s | 30.3 s | 24.6 s | 16 s |
-| mp_mouse_1_jul | 19,714 | 1.7 s | ~390 s | 33.1 s | 29.2 s | 61 s |
-| control_mouse_1_jul | 23,902 | 3.9 s | — | 18.3 s | 26.3 s | 81 s |
-| control_mouse_1_oct | 23,906 | 2.8 s | — | 19.8 s | 24.7 s | 113 s |
-| mp_mouse_1_oct | 23,866 | 1.7 s | — | 34.1 s | 25.5 s | 190 s |
-| still_test | 23,877 | 1.7 s | — | 24.4 s | 30.5 s | 54 s |
-| moving_test | 47,028 | 5.7 s | — | 51.4 s | 35.1 s | 172 s |
+| Dataset | N | HDBSCAN | AP full | AP sampled | AP coreset | AP two-level | AP sparse |
+|---|---|---|---|---|---|---|---|
+| short_comparison_test | 1,195 | < 0.1 s | 0.6 s | 0.3 s | 0.2 s | 0.2 s | 0.3 s |
+| comparison_test | 13,799 | 2.3 s | ~135 s | 30.3 s | 24.6 s | 16.8 s | 16 s |
+| mp_mouse_1_jul | 19,714 | 1.7 s | ~390 s | 33.1 s | 29.2 s | 25.6 s | 61 s |
+| control_mouse_1_jul | 23,902 | 3.9 s | — | 18.3 s | 26.3 s | 28.5 s | 81 s |
+| control_mouse_1_oct | 23,906 | 2.8 s | — | 19.8 s | 24.7 s | 35.1 s | 113 s |
+| mp_mouse_1_oct | 23,866 | 1.7 s | — | 34.1 s | 25.5 s | 28.1 s | 190 s |
+| still_test | 23,877 | 1.7 s | — | 24.4 s | 30.5 s | 26.0 s | 54 s |
+| moving_test | 47,028 | 5.7 s | — | 51.4 s | 35.1 s | 70.5 s | 172 s |
 
 ---
 
