@@ -1,0 +1,878 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{pdflscape}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{graphicx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=blue!60!black,
+    urlcolor=blue!60!black
+}
+
+\setlist[itemize]{leftmargin=1.5em}
+\setlist[enumerate]{leftmargin=1.5em}
+\renewcommand{\arraystretch}{1.15}
+
+\title{\textbf{A Scalable Python Pipeline for IMU-Based Behavioral Clustering}}
+\author{Chuqi Wang}
+\date{June 17, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document summarizes the current \texttt{Python\_Pipeline} implementation for processing Harp IMU recordings and clustering short behavioral windows. The pipeline replaces the original MATLAB workflow with a Python implementation that preserves the key representation used by the prior system: each behavioral window is converted into channel-wise histograms, the histograms are transformed into cumulative distribution functions (CDFs), and distances between windows are computed as a CDF-based approximation to one-dimensional Earth Mover's Distance (EMD), also known as Wasserstein-1 distance. We describe the raw data format, missing-packet handling, signal processing, histogram feature construction, CDF/EMD distance computation, seven Affinity Propagation (AP)-family clustering methods, and the HDBSCAN reference method. We then summarize current comparison results across eight datasets, using silhouette score and agreement with full AP as the main evaluation criteria.
+\end{abstract}
+
+\section{Project Goal}
+
+This project analyzes mouse behavior from wearable inertial measurement unit (IMU) recordings. The central computational task is to partition continuous motion sensor data into short behavioral windows and assign each window to an unsupervised behavioral cluster. These clusters can then be used for downstream analyses, such as comparing behavioral motif usage across control and Parkinsonian mice or across different arena conditions.
+
+The original MATLAB pipeline performs Affinity Propagation clustering using an EMD-based similarity matrix. However, the MATLAB implementation becomes expensive because it computes many pairwise EMD distances and stores an $N \times N$ similarity matrix, where $N$ is the number of behavioral windows. The Python pipeline keeps the same conceptual distance metric while introducing vectorized preprocessing, CDF-based EMD computation, approximate/exact nearest-neighbor search with FAISS, and several scalable AP variants.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/pipeline_overview.png}
+\caption{Overview of the Python pipeline from raw Harp CSV files to behavioral cluster labels.}
+\label{fig:pipeline-overview}
+\end{figure}
+
+\section{Data Overview}
+
+\subsection{Raw Harp Motion Data}
+
+The raw input is a Harp motion CSV file. Rows can have variable width, so \texttt{prepare\_test\_data.py} first pads all rows into a consistent table. Motion packets are identified by:
+
+\begin{equation}
+    \texttt{RegisterAddress} = 34.
+\end{equation}
+
+Only these rows contain IMU motion samples. After filtering to motion rows, the Python loader extracts:
+
+\begin{equation}
+    \texttt{raw\_motion} \in \mathbb{R}^{N_{\mathrm{samples}} \times 10},
+\end{equation}
+
+with columns
+
+\begin{center}
+\texttt{[ax, ay, az, gx, gy, gz, mx, my, mz, counter]}.
+\end{center}
+
+The first three columns are accelerometer readings, the next three are gyroscope readings, the next three are magnetometer readings, and the last column is the packet counter. Timestamps and folder/session labels are stored separately. The magnetometer columns (\texttt{mx}, \texttt{my}, \texttt{mz}) are present in the raw data but are not used by the current pipeline.
+
+\subsection{Missing-Packet Detection and Cleaning}
+
+The packet counter wraps around from 127 to 0. Consecutive motion packets should therefore have counter difference:
+
+\begin{equation}
+    \Delta c = (c_{t+1} - c_t) \bmod 128 = 1.
+\end{equation}
+
+If $\Delta c > 1$, then $\Delta c - 1$ motion packets were dropped. The preprocessing script inserts placeholder rows with NaN sensor values and linearly interpolated timestamps. This preserves temporal alignment before windowing.
+
+The cleaning rule is window-based. Since one behavioral window contains 60 samples, corresponding to 300 ms at 200 Hz, the script checks missingness inside each 60-row block. If more than 10\% of samples in a window contain NaNs in the sensor columns, the entire window is discarded. Remaining NaNs are linearly interpolated. The cleaned motion data are finally trimmed to a multiple of 60 samples.
+
+\section{Signal Processing}
+
+After loading the cleaned motion rows, \texttt{clustering\_pipeline.py} applies signal processing designed to mirror the MATLAB pipeline.
+
+\subsection{Scaling to Physical Units}
+
+Raw accelerometer and gyroscope ADC values are scaled as:
+
+\begin{align}
+    \mathbf{a} &= \texttt{raw\_accel} \times \frac{4}{32768}, \\
+    \boldsymbol{\omega} &= \texttt{raw\_gyro} \times \frac{1000}{32768}.
+\end{align}
+
+The accelerometer range is $\pm 4g$, and the gyroscope range is $\pm 1000$ degrees per second.
+
+\subsection{Filtering and Derived Signals}
+
+The pipeline applies a clipped-boundary median filter with kernel size 7. It then applies a zero-phase first-order Butterworth high-pass filter at 0.5 Hz to separate body acceleration from slower gravitational/postural components. The code constructs the four channels used for histogram features:
+
+\begin{align}
+    y_{\mathrm{GA}} &= y - y_{\mathrm{BA}}, \\
+    z &= \text{median-filtered vertical acceleration}, \\
+    z_{\mathrm{gyro}} &= \text{median-filtered gyroscope z-axis}, \\
+    a_{\mathrm{tot}} &= \sqrt{x_{\mathrm{BA}}^2 + y_{\mathrm{BA}}^2 + z_{\mathrm{BA}}^2}.
+\end{align}
+
+The fourth histogram channel uses $\log(a_{\mathrm{tot}})$, with a small numerical floor to avoid $\log(0)$.
+
+\section{Windowing and Histogram Representation}
+
+\subsection{Behavioral Windows}
+
+The processed time series is split into non-overlapping windows:
+
+\begin{equation}
+    W_i = \{60 \text{ consecutive samples}\}.
+\end{equation}
+
+At 200 Hz, 60 samples correspond to:
+
+\begin{equation}
+    \frac{60}{200} = 0.3 \text{ s} = 300 \text{ ms}.
+\end{equation}
+
+Thus, each row of the clustering input represents one 300 ms behavioral segment.
+
+\subsection{MATLAB-Compatible Histogram Bins}
+
+The current Python code uses bin edges recovered from the MATLAB \texttt{hardHistNew.mat} thresholds. The resulting feature vector has 30 dimensions:
+
+\begin{equation}
+    11 + 11 + 6 + 2 = 30.
+\end{equation}
+
+\begin{table}[h]
+\centering
+\caption{Histogram channels and bin counts used by the current Python implementation.}
+\begin{tabularx}{\textwidth}{lcl}
+\toprule
+Channel & Number of bins & Meaning \\
+\midrule
+$y_{\mathrm{GA}}$ & 11 & Gravity/postural component of the y-axis acceleration \\
+$z$ & 11 & Median-filtered z-axis acceleration \\
+$z_{\mathrm{gyro}}$ & 6 & Median-filtered z-axis angular velocity \\
+$\log(a_{\mathrm{tot}})$ & 2 & Log total body acceleration magnitude \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For a window $W_i$ and channel $c$, the pipeline counts how many of the 60 samples fall into each bin:
+
+\begin{equation}
+    n_{i,c,b} = \#\{x_t \in W_i : x_t \text{ falls in bin } b\}.
+\end{equation}
+
+The count histogram is normalized by window length:
+
+\begin{equation}
+    h_{i,c,b} = \frac{n_{i,c,b}}{60}.
+\end{equation}
+
+Therefore, each per-channel histogram is a discrete probability distribution:
+
+\begin{equation}
+    \sum_b h_{i,c,b} = 1.
+\end{equation}
+
+The four channel histograms are concatenated:
+
+\begin{equation}
+    \mathbf{h}_i =
+    \left[
+    \mathbf{h}_{i,y_{\mathrm{GA}}},
+    \mathbf{h}_{i,z},
+    \mathbf{h}_{i,z_{\mathrm{gyro}}},
+    \mathbf{h}_{i,\log(a_{\mathrm{tot}})}
+    \right]
+    \in \mathbb{R}^{30}.
+\end{equation}
+
+\subsection{Worked Example: Data at Each Processing Stage}
+
+Tables~\ref{tab:stage1} and~\ref{tab:stage2} show five consecutive raw samples and their
+processed equivalents from the \texttt{short\_comparison\_test} dataset (starting at
+$t \approx 339.47$\,s). Figure~\ref{fig:stage3} shows the resulting 30-dimensional
+histogram feature vector for the 300\,ms window centred at $t = 339.63$\,s,
+chosen as a representative example with values spread across multiple bins in each channel.
+
+\begin{table}[h]
+\centering
+\caption{Stage~1 — raw ADC samples. All ten sensor columns are shown.
+\texttt{ax}–\texttt{gz}: accelerometer and gyroscope integer counts;
+\texttt{mx}–\texttt{mz}: magnetometer counts (not used by the pipeline);
+\texttt{ctr}: packet counter (wraps 0–127).}
+\label{tab:stage1}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{rrrrrrrrrrr}
+\toprule
+$t$ (s) & \texttt{ax} & \texttt{ay} & \texttt{az} & \texttt{gx} & \texttt{gy} & \texttt{gz} & \texttt{mx} & \texttt{my} & \texttt{mz} & \texttt{ctr} \\
+\midrule
+339.473 & $-$7692 &   $-$923 &  1368 &   3253 &    930 &  $-$897 & $-$30 & $-$18 & $-$34 & 27 \\
+339.478 & $-$8041 & $-$1740  &  1876 &   4787 & $-$1121 &  1091  & $-$30 & $-$18 & $-$34 & 28 \\
+339.483 & $-$8823 & $-$1796  &  2243 &   2636 & $-$2255 &  1893  & $-$30 & $-$18 & $-$34 & 30 \\
+339.488 & $-$8099 &   $-$849 &  2510 &    404 & $-$2231 &  1947  & $-$33 & $-$17 & $-$36 & 31 \\
+339.493 & $-$6685 &   $-$350 &  4486 & $-$265  & $-$1887 &  3228 & $-$33 & $-$17 & $-$36 & 32 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Stage~2 — processed signals after ADC scaling, median filtering,
+and high-pass filtering. Units: $y_{\mathrm{GA}}$ and $z$ in $g$;
+$z_{\mathrm{gyro}}$ in deg\,s$^{-1}$; $\log(a_{\mathrm{tot}})$ dimensionless.}
+\label{tab:stage2}
+\small
+\begin{tabular}{rrrrr}
+\toprule
+$t$ (s) & $y_{\mathrm{GA}}$ & $z$ & $z_{\mathrm{gyro}}$ & $\log(a_{\mathrm{tot}})$ \\
+\midrule
+339.473 & $-$0.145 & 0.306 & $-$27.4 & $-$0.776 \\
+339.478 & $-$0.143 & 0.306 &   33.3 & $-$0.769 \\
+339.483 & $-$0.142 & 0.306 &   57.8 & $-$0.763 \\
+339.488 & $-$0.141 & 0.306 &   59.4 & $-$0.756 \\
+339.493 & $-$0.140 & 0.306 &   98.5 & $-$0.788 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/data_stages_example.png}
+\caption{Stage~3 — 30-dimensional normalised histogram feature vector for the
+300\,ms window centred at $t=339.63$\,s. Each colour corresponds to one sensor
+channel; dashed lines mark channel boundaries. The $y_{\mathrm{GA}}$ channel
+splits across bins~4--5, indicating the mouse posture oscillated near the
+boundary between two ranges during this window. The $z$ channel shows a
+bimodal pattern (bins~16 and~18), and all six $z_{\mathrm{gyro}}$ bins are
+occupied, reflecting varied angular velocity. Each channel sums to~1.}
+\label{fig:stage3}
+\end{figure}
+
+\section{CDF Transformation and EMD Distance}
+
+\subsection{CDF Representation}
+
+Earth Mover's Distance measures how much ``probability mass'' must be moved to transform one distribution into another~\cite{rubner2000}. In one dimension, Wasserstein-1 distance between two normalized histograms can be computed efficiently as the L1 distance between their cumulative distribution functions (CDFs).
+
+For each channel $c$, define the CDF of window $i$ as:
+
+\begin{equation}
+    H_{i,c,b} = \sum_{r=1}^{b} h_{i,c,r}.
+\end{equation}
+
+The Python code additionally divides the CDF L1 sum by $(B_c - 1)$, where $B_c$ is the number of bins for channel $c$. This gives each channel comparable weight even when it has a different number of bins.
+
+\subsection{Per-Channel EMD Approximation}
+
+For two windows $i$ and $j$, the per-channel CDF distance is:
+
+\begin{equation}
+    d_c(i,j) =
+    \frac{1}{B_c - 1}
+    \sum_{b=1}^{B_c}
+    \left| H_{i,c,b} - H_{j,c,b} \right|.
+\end{equation}
+
+This is the one-dimensional Wasserstein/EMD distance for uniformly spaced bins, up to the normalization used in the implementation.
+
+\subsection{Total Behavioral Distance}
+
+The total distance between two behavioral windows is the sum across channels:
+
+\begin{equation}
+    d(i,j) = \sum_{c=1}^{4} d_c(i,j).
+\end{equation}
+
+In code, the four per-channel CDF vectors are concatenated into a single feature vector $\mathbf{C}_i \in \mathbb{R}^{30}$, so the total distance reduces to a single L1 call:
+
+\begin{equation}
+    d(i,j) = \left\| \mathbf{C}_i - \mathbf{C}_j \right\|_1.
+\end{equation}
+
+The per-channel normalization by $(B_c - 1)$ is absorbed into the concatenated representation, so the single L1 call correctly weights all four channels.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/histogram_cdf_example.png}
+\caption{Toy example showing how two window-level histograms are transformed into CDFs. In one dimension, the L1 area between CDFs gives the Wasserstein/EMD distance used by the clustering methods.}
+\label{fig:hist-cdf}
+\end{figure}
+
+\subsection{AP Similarity}
+
+Affinity Propagation requires similarities rather than distances. The MATLAB pipeline uses negative squared EMD similarity:
+
+\begin{equation}
+    s(i,j) = -d(i,j)^2.
+\end{equation}
+
+The Python AP methods follow the same similarity convention, but the preference setting depends on the AP variant. For full AP, the preference is set to:
+
+\begin{equation}
+    p = \min_{i,j} s(i,j),
+\end{equation}
+
+matching the current MATLAB setting \texttt{param = min(s(:,3))} in \texttt{VPAPPAxes.m}, where column~3 of \texttt{s} stores the pairwise similarity values. For random-sampled AP, coreset AP, sparse AP, k-means-sampled AP, and stratified AP, the code estimates the same global minimum similarity by sampling 500,000 random pairs from all $N$ windows. Two-level AP is the main exception: it uses median affinity within local blocks and again among candidate exemplars, because a global minimum preference is too conservative at those smaller local scales.
+
+\section{Role of FAISS}
+
+FAISS~\cite{johnson2021} is not itself the behavioral clustering algorithm in this pipeline. It is used as a fast nearest-neighbor engine operating on the CDF feature vectors computed in the previous section. In the AP sampled, coreset, k-means sampled, stratified, sparse, and two-level methods, AP finds a smaller set of exemplars. FAISS then answers:
+
+\begin{center}
+\emph{For this window, which exemplar has the smallest CDF-L1 distance?}
+\end{center}
+
+Mathematically, if $\mathcal{E} = \{\mathbf{e}_1,\ldots,\mathbf{e}_K\}$ is the final exemplar set, every window $i$ receives label:
+
+\begin{equation}
+    \ell_i = \arg\min_{k \in \{1,\ldots,K\}}
+    \left\| \mathbf{C}_i - \mathbf{e}_k \right\|_1.
+\end{equation}
+
+Thus FAISS accelerates assignment and KNN graph construction; it does not replace AP's exemplar selection.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/faiss_usage.png}
+\caption{FAISS usage in the AP variants. AP selects exemplars; FAISS stores those exemplar vectors and performs fast nearest-neighbor search under L1 distance to assign every window to its closest exemplar.}
+\label{fig:faiss-usage}
+\end{figure}
+
+\section{Why the Python Pipeline Is Faster Than the MATLAB-Style Approach}
+
+The speed improvement comes from two separate changes. First, the distance computation is vectorized: each window is represented as a CDF vector, and the EMD-like distance between two windows is computed by a simple L1 distance between CDF vectors. This avoids repeatedly calling a MATLAB/MEX EMD routine inside nested loops.
+
+Second, the scalable AP variants avoid constructing the full dense $N \times N$ similarity matrix for large datasets. Full AP is still available as a reference method, but the scalable methods run AP on a subset, on local blocks, or on a sparse KNN graph, then use FAISS to assign all windows to the final exemplars. The assignment step scales with the number of windows times the number of exemplars rather than all pairs of windows.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/matlab_python_speed.png}
+\caption{Main computational differences between the MATLAB-style full AP workflow and the scalable Python variants. The largest gain comes from avoiding dense all-pairs AP computations when $N$ is large.}
+\label{fig:matlab-python-speed}
+\end{figure}
+
+\section{Affinity Propagation Algorithm}
+\label{sec:ap-algorithm}
+
+Affinity Propagation (AP)~\cite{frey2007} is an exemplar-based clustering algorithm. Rather than requiring the number of clusters to be specified in advance, AP discovers exemplars --- representative data points that best summarize groups of similar points --- by iteratively passing messages between all pairs of points until a consistent set of exemplars emerges.
+
+\subsection{Problem Formulation}
+
+Given $N$ data points with a pairwise similarity matrix $S \in \mathbb{R}^{N \times N}$, AP seeks a subset $\mathcal{E}$ of exemplars and an assignment $e_i \in \mathcal{E}$ for each point $i$ that maximizes the total similarity:
+
+\begin{equation}
+    \mathcal{E}^* = \arg\max_{\mathcal{E}} \sum_{i=1}^{N} s(i,\, e_i),
+\end{equation}
+
+subject to the self-consistency constraint that every exemplar must represent itself:
+\begin{equation}
+    e_k = k \quad \text{for all } k \in \mathcal{E}.
+\end{equation}
+
+In the current pipeline, the similarity between two windows is the negative squared CDF-L1 distance:
+\begin{equation}
+    s(i,k) = -d(i,k)^2 = -\left\|\mathbf{C}_i - \mathbf{C}_k\right\|_1^2.
+\end{equation}
+
+The diagonal $s(k,k) = p$ is the \textit{preference} parameter, which controls how many exemplars are found. A higher preference (closer to zero) yields more exemplars and therefore more clusters; a lower preference (more negative) yields fewer.
+
+\subsection{Message-Passing Equations}
+
+AP maintains two $N \times N$ message matrices that are updated alternately at each iteration.
+
+\paragraph{Responsibility $r(i,k)$.}
+The responsibility $r(i,k)$ is sent from point $i$ to candidate exemplar $k$. It reflects how much point $i$ ``prefers'' $k$ as its exemplar relative to all other candidates:
+
+\begin{equation}
+    r(i,k) \;\leftarrow\; s(i,k) - \max_{k' \neq k}\bigl\{a(i,k') + s(i,k')\bigr\}.
+\end{equation}
+
+A large positive $r(i,k)$ means $k$ is a better candidate for $i$ than any alternative.
+
+\paragraph{Availability $a(i,k)$.}
+The availability $a(i,k)$ is sent from candidate exemplar $k$ to point $i$. It reflects how ``willing'' $k$ is to be an exemplar, given the support it receives from other points.
+
+For off-diagonal entries ($i \neq k$):
+\begin{equation}
+    a(i,k) \;\leftarrow\; \min\!\left(0,\;\; r(k,k) + \sum_{i' \notin \{i,\,k\}} \max\!\bigl(0,\, r(i',k)\bigr)\right).
+\end{equation}
+
+The minimum with zero enforces that only already-supported candidates can attract more points. For the self-availability ($i = k$):
+\begin{equation}
+    a(k,k) \;\leftarrow\; \sum_{i' \neq k} \max\!\bigl(0,\, r(i',k)\bigr).
+\end{equation}
+
+\paragraph{Damping.}
+To prevent numerical oscillations during message passing, each new message is mixed with its previous value using damping factor $\lambda \in [0.5, 1)$:
+\begin{align}
+    r &\;\leftarrow\; (1-\lambda)\,r_{\mathrm{new}} + \lambda\,r_{\mathrm{old}}, \\
+    a &\;\leftarrow\; (1-\lambda)\,a_{\mathrm{new}} + \lambda\,a_{\mathrm{old}}.
+\end{align}
+
+The current pipeline uses $\lambda = 0.9$ for all AP variants (both the scikit-learn calls and the custom sparse AP implementation). This is higher than the scikit-learn default of 0.5, and was chosen to improve convergence stability on the high-dimensional CDF feature space.
+
+\subsection{Convergence and Assignment}
+
+At each iteration, the \textit{criterion matrix} $C = R + A$ is used to determine exemplars. Point $k$ is identified as an exemplar when:
+\begin{equation}
+    r(k,k) + a(k,k) > 0.
+\end{equation}
+
+The algorithm converges when the set of exemplars remains unchanged for a fixed number of consecutive iterations (default: 15 in scikit-learn) or when the maximum iteration count is reached. After convergence, every point $i$ is assigned to the exemplar that maximises its criterion:
+\begin{equation}
+    e_i = \arg\max_{k}\;\bigl\{r(i,k) + a(i,k)\bigr\}.
+\end{equation}
+
+\subsection{Pseudocode}
+
+Algorithm~\ref{alg:ap} summarizes the full AP procedure.
+
+\begin{algorithm}[h]
+\caption{Affinity Propagation}
+\label{alg:ap}
+\begin{algorithmic}[1]
+\Require Similarity matrix $S \in \mathbb{R}^{N \times N}$, preference $p$, damping $\lambda = 0.9$, \texttt{max\_iter} $T = 1000$, \texttt{convergence\_iter} $C = 15$
+\Ensure Exemplar set $\mathcal{E}$, assignment labels $\{e_i\}$
+\State $S[k,k] \leftarrow p$ \textbf{ for all } $k$ \Comment{set diagonal preference}
+\State $R \leftarrow \mathbf{0}_{N\times N}$,\; $A \leftarrow \mathbf{0}_{N\times N}$ \Comment{initialize messages}
+\State $\text{stable} \leftarrow 0$
+\For{$t = 1$ \textbf{to} $T$}
+    \State \textbf{// Update responsibilities}
+    \For{each $i$}
+        \State $\mathrm{AS}[k] \leftarrow A[i,k] + S[i,k]$ \textbf{ for all } $k$
+        \State $R_{\mathrm{new}}[i,k] \leftarrow S[i,k] - \max_{k' \neq k}\,\mathrm{AS}[k']$ \textbf{ for all } $k$
+    \EndFor
+    \State $R \leftarrow (1-\lambda)\,R_{\mathrm{new}} + \lambda\,R$
+    \State \textbf{// Update availabilities}
+    \For{each $k$}
+        \State $\mathrm{Rp}[i'] \leftarrow \max(0,\, R[i',k])$ \textbf{ for all } $i' \neq k$
+        \State $A_{\mathrm{new}}[i,k] \leftarrow \min\!\bigl(0,\; R[k,k] + \sum_{i' \notin \{i,k\}} \mathrm{Rp}[i']\bigr)$ \textbf{ for all } $i \neq k$
+        \State $A_{\mathrm{new}}[k,k] \leftarrow \sum_{i' \neq k} \mathrm{Rp}[i']$
+    \EndFor
+    \State $A \leftarrow (1-\lambda)\,A_{\mathrm{new}} + \lambda\,A$
+    \State \textbf{// Check convergence}
+    \State $\mathcal{E} \leftarrow \{k : R[k,k] + A[k,k] > 0\}$
+    \If{$\mathcal{E}$ unchanged from previous iteration}
+        \State $\text{stable} \leftarrow \text{stable} + 1$
+    \Else
+        \State $\text{stable} \leftarrow 0$
+    \EndIf
+    \If{$\text{stable} \geq C$} \textbf{break} \EndIf
+\EndFor
+\State $e_i \leftarrow \arg\max_k\,\{R[i,k] + A[i,k]\}$ \textbf{ for all } $i$ \Comment{final assignment}
+\State \Return $\mathcal{E}$, $\{e_i\}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Time and Memory Complexity}
+
+Full AP requires storing and updating two $N \times N$ message matrices, giving:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Resource & Cost \\
+\midrule
+Memory & $O(N^2)$ \\
+Time per iteration & $O(N^2)$ \\
+Total time & $O(T \cdot N^2)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+For $N = 20{,}000$ and $T \approx 200$ iterations, full AP requires approximately 12\,GB of memory and several minutes of compute. This is the fundamental bottleneck that motivates all scalable AP variants described in Section~\ref{sec:clustering-methods}.
+
+\subsection{Parameter Settings Used in This Pipeline}
+
+Table~\ref{tab:ap-params} lists the AP hyperparameters used across all variants in the current implementation.
+
+\begin{table}[h]
+\centering
+\caption{AP hyperparameter settings used in the current pipeline. Two-level AP uses different iteration limits at each level because block-level AP operates on smaller subproblems.}
+\label{tab:ap-params}
+\begin{tabular}{lcccp{4.2cm}}
+\toprule
+Method & $\lambda$ & \texttt{max\_iter} & \texttt{conv\_iter} & Preference \\
+\midrule
+AP Full            & 0.9 & 1000 & 15 & exact $\min$ of $N{\times}N$ affinity \\
+AP Sampled         & 0.9 & 1000 & 15 & global min$^\dagger$ \\
+AP Coreset         & 0.9 & 1000 & 15 & global min$^\dagger$ \\
+AP K-Means         & 0.9 & 1000 & 15 & global min$^\dagger$ \\
+AP Stratified      & 0.9 & 1000 & 15 & global min$^\dagger$ \\
+AP Sparse (custom) & 0.9 & 1000 & 15 & global min$^\dagger$ \\
+AP Two-level (L1)  & 0.9 & 300  & 15 & per-block median affinity \\
+AP Two-level (L2)  & 0.9 & 500  & 30 & median among candidate exemplars \\
+\bottomrule
+\multicolumn{5}{l}{$^\dagger$ Estimated from 500,000 random pairs drawn from all $N$ windows.}
+\end{tabular}
+\end{table}
+
+All variants use $\lambda = 0.9$, which is higher than the scikit-learn default of 0.5. A higher damping value slows convergence but reduces oscillation, which improves stability when running AP on high-dimensional CDF feature vectors.
+
+\section{Clustering Methods}
+\label{sec:clustering-methods}
+
+The current comparison script evaluates seven AP-family methods plus one HDBSCAN reference method. AP methods produce cluster exemplars; HDBSCAN identifies dense regions and may label sparse points as noise.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/method_overview.png}
+\caption{Visual summary of the clustering methods currently compared in \texttt{Python\_Pipeline}. The AP-family methods differ mainly in how they reduce the cost of exemplar selection before assigning all windows to final exemplars.}
+\label{fig:method-overview}
+\end{figure}
+
+\subsection{Full Affinity Propagation}
+
+Full AP~\cite{frey2007} is the closest Python equivalent to the MATLAB algorithm. It computes the full pairwise distance matrix:
+
+\begin{equation}
+    D \in \mathbb{R}^{N \times N},
+\end{equation}
+
+converts it to a similarity matrix $S = -D^2$, fills the diagonal with the AP preference, and runs scikit-learn's~\cite{pedregosa2011} \texttt{AffinityPropagation} with precomputed affinities. The preference is set to the exact minimum of the $N{\times}N$ affinity matrix, matching the MATLAB \texttt{AccelCluster} setting. It is the most faithful reference method, but requires $O(N^2)$ memory and $O(N^2)$ work per AP iteration, so it is skipped for datasets with $N > 20{,}000$ in the batch comparison.
+
+\subsection{Random-Sampled AP}
+
+Random-sampled AP reduces the AP cost by selecting a subset of windows:
+
+\begin{enumerate}
+    \item Randomly sample \textbf{10,000 windows}.
+    \item Run full AP on the sampled windows.
+    \item Extract AP exemplars from the sample.
+    \item Use FAISS exact L1 search to assign every original window to its nearest exemplar.
+\end{enumerate}
+
+The preference is estimated from 500,000 random pairs drawn from \emph{all} $N$ windows (not just the 10,000 sample), keeping the preference scale consistent with full AP. This is the default scalable AP method in the current pipeline.
+
+\subsection{Coreset-Sampled AP}
+
+Coreset-sampled AP replaces random sampling with Greedy K-Center selection. The goal is to select representative windows that cover the feature space, including rare behaviors that random sampling may miss.
+
+\begin{enumerate}
+    \item Pick an initial point.
+    \item Iteratively add the point farthest from the selected set until \textbf{10,000 windows} are selected.
+    \item Run AP on the selected coreset.
+    \item Assign all windows to the nearest exemplar using FAISS.
+\end{enumerate}
+
+The preference uses the same global min estimate as random-sampled AP (500,000 random pairs from all $N$ windows). This method can improve coverage of rare behavioral modes, but it may not always best match full AP.
+
+\subsection{Sparse AP}
+
+Sparse AP avoids the dense $N \times N$ similarity matrix by constructing a K-nearest-neighbor graph:
+
+\begin{enumerate}
+    \item Use FAISS IVFFlat approximate nearest-neighbor search to find $K$ neighbors per point in CDF feature space.
+    \item Keep similarities only for edges in the KNN graph.
+    \item Symmetrize the graph and add diagonal preference values.
+    \item Run custom sparse AP message passing.
+    \item Assign all windows to the nearest exemplar using FAISS exact L1 search.
+\end{enumerate}
+
+The memory cost is approximately $O(NK)$ rather than $O(N^2)$. The current pipeline uses $K = 100$ nearest neighbours by default. However, because the graph is sparse, the result can differ substantially from full AP if $K$ or preference is not well tuned.
+
+\subsection{Two-Level AP}
+
+Two-level AP is designed to let all windows participate without forming a global dense affinity matrix.
+
+\begin{enumerate}
+    \item Use FAISS k-means to partition all $N$ windows into $M = \max(4,\lfloor N/2500 \rfloor)$ blocks of $\sim$2,500 windows each (FAISS k-means, \texttt{niter}=20).
+    \item Run full AP inside each block (\texttt{max\_iter}=300, \texttt{conv\_iter}=15, preference = per-block median affinity) to obtain local candidate exemplars.
+    \item Run a second AP over all candidate exemplars $M_{\mathrm{cand}}$ (\texttt{max\_iter}=500, \texttt{conv\_iter}=30, preference = median affinity among candidates).
+    \item Assign all windows to the nearest final exemplar using FAISS exact L1 search.
+\end{enumerate}
+
+This method reduces AP cost from roughly $O(N^2)$ to approximately $O(N^2/M + M_{\mathrm{cand}}^2)$ over $M$ blocks, where $M_{\mathrm{cand}}$ is the number of candidate exemplars collected from all blocks. The median preference at both levels is an intentional design choice: using the global minimum preference would collapse each local block to a single exemplar, leaving too few candidates for the second-level AP.
+
+\subsection{K-Means-Sampled AP}
+
+K-means-sampled AP uses mini-batch k-means to select central representative windows:
+
+\begin{enumerate}
+    \item Run mini-batch k-means with $k = 10{,}000$ to partition all $N$ windows (\texttt{n\_init}=3, \texttt{batch\_size}=$\min(4096, N)$, \texttt{max\_iter}=100).
+    \item Map each centroid to the nearest real window using FAISS exact L1 search.
+    \item Run AP on the 10,000 selected real windows.
+    \item Assign all windows to the nearest AP exemplar using FAISS.
+\end{enumerate}
+
+The preference uses the same global min estimate as random-sampled AP (500,000 random pairs from all $N$ windows). Compared with random sampling, this method selects cluster-central rather than boundary points, which can improve ARI against full AP.
+
+\subsection{Stratified-Sampled AP}
+
+Stratified AP first partitions the full dataset into coarse strata and then samples from each stratum.
+
+\begin{enumerate}
+    \item Run mini-batch k-means with $k = 200$ coarse strata (\texttt{n\_init}=3, \texttt{batch\_size}=$\min(4096, N)$, \texttt{max\_iter}=100).
+    \item Draw approximately equal numbers of windows from each stratum until \textbf{10,000 windows} are selected in total ($\sim$50 per stratum).
+    \item Run AP on the stratified sample.
+    \item Assign all windows to the nearest exemplar using FAISS.
+\end{enumerate}
+
+The preference uses the same global min estimate as random-sampled AP (500,000 random pairs from all $N$ windows). By sampling equally from each stratum, this method ensures that rare behaviors occupying small fractions of the recording are represented in the AP sample, regardless of their frequency.
+
+\subsection{HDBSCAN Reference Method}
+
+HDBSCAN~\cite{campello2013} clusters CDF features directly using L1 distance. Unlike AP, it does not require an exemplar preference value and can label low-density windows as noise (assigned label $-1$). The output can be useful for exploratory density analysis, but it is not expected to match MATLAB AP results closely because it optimizes a different clustering objective.
+
+\section{Evaluation Metrics}
+
+\subsection{Number of Clusters and Noise}
+
+For AP methods, every window is assigned to a cluster, so the noise percentage is 0\%. For HDBSCAN, some windows may be labeled as noise and are excluded from cluster-size statistics.
+
+\subsection{Silhouette Score}
+\label{sec:silhouette}
+
+Silhouette score~\cite{rousseeuw1987} measures how close a point is to its own cluster compared with other clusters. The code computes silhouette using L1 distance on CDF features, subsampling up to 2,000 valid windows for speed. Note that HDBSCAN silhouette scores are not directly comparable to AP-family scores: HDBSCAN may achieve high silhouette by labeling ambiguous boundary windows as noise and retaining only well-separated points, whereas AP assigns every window to a cluster. The interpretation used in the report is:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Silhouette range & Interpretation \\
+\midrule
+$>0.5$ & good \\
+$0.25$--$0.5$ & reasonable \\
+$<0.25$ & poor \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{ARI Against Full AP}
+
+Adjusted Rand Index (ARI)~\cite{hubert1985} is used when full AP is available. Full AP is treated as the MATLAB-like reference. ARI is interpreted as:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+ARI value & Meaning \\
+\midrule
+1 & identical clustering \\
+0 & agreement expected by chance \\
+$<0$ & worse than chance \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Datasets}
+
+The current batch comparison evaluates eight datasets.
+
+\begin{table}[h]
+\centering
+\caption{Datasets included in the current method comparison. Duration is computed as $N \times 300\,\text{ms}$.}
+\begin{tabular}{lrrl}
+\toprule
+Dataset & $N$ & Duration & Description \\
+\midrule
+\texttt{short\_comparison\_test} & 1,195 & $\sim$6 min & Short subset of comparison\_test for quick testing \\
+\texttt{comparison\_test} & 13,799 & $\sim$69 min & Full MATLAB-equivalent reference recording \\
+\texttt{mp\_mouse\_1\_jul} & 19,714 & $\sim$99 min & MitoPark Parkinson's mouse, July session \\
+\texttt{control\_mouse\_1\_jul} & 23,902 & $\sim$120 min & Control mouse, July session (age-matched) \\
+\texttt{control\_mouse\_1\_oct} & 23,906 & $\sim$120 min & Control mouse, October session (age-matched) \\
+\texttt{mp\_mouse\_1\_oct} & 23,866 & $\sim$119 min & MitoPark Parkinson's mouse, October session \\
+\texttt{still\_test} & 23,877 & $\sim$119 min & Low-motion baseline recording \\
+\texttt{moving\_test} & 47,028 & $\sim$235 min & High-motion activity recording \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Results}
+
+\subsection{Cluster Counts and Silhouette Scores}
+
+Tables~\ref{tab:cluster-counts} and~\ref{tab:silhouette} summarize the current cached comparison results. Cluster counts and silhouette scores are shown separately for readability. Full AP is skipped when the dataset has more than 20,000 windows. The accompanying figures use abbreviated axis labels from the plotting code (e.g., \textit{AP twolevel}, \textit{AP kmeans}, \textit{AP stratified}), which correspond to the full method names used in the tables and text.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/cluster_count_heatmap.png}
+\caption{Heatmap of the number of clusters found by each method. Sparse AP and HDBSCAN tend to produce many more clusters than the AP sampled family.}
+\label{fig:cluster-count-heatmap}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Number of clusters found by each method. A dash indicates that AP Full was skipped because the dataset exceeded the full-AP size threshold. High cluster counts in Sparse AP and HDBSCAN reflect known limitations of those methods rather than desirable results.}
+\label{tab:cluster-counts}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lcccccccc}
+\toprule
+Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
+\midrule
+\texttt{short\_comparison\_test} & 2 & 9 & 9 & 9 & 19 & 11 & 9 & 9 \\
+\texttt{comparison\_test} & 7 & 33 & 30 & 30 & 75 & 33 & 29 & 34 \\
+\texttt{mp\_mouse\_1\_jul} & 82 & 41 & 28 & 32 & 108 & 38 & 27 & 33 \\
+\texttt{control\_mouse\_1\_jul} & 3 & -- & 30 & 34 & 134 & 48 & 29 & 35 \\
+\texttt{control\_mouse\_1\_oct} & 17 & -- & 29 & 32 & 142 & 46 & 28 & 36 \\
+\texttt{mp\_mouse\_1\_oct} & 207 & -- & 30 & 34 & 145 & 33 & 31 & 38 \\
+\texttt{still\_test} & 221 & -- & 29 & 30 & 118 & 36 & 28 & 32 \\
+\texttt{moving\_test} & 473 & -- & 30 & 42 & 222 & 32 & 32 & 42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/silhouette_heatmap.png}
+\caption{Silhouette score by dataset and method. Higher values indicate stronger geometric separation in the CDF-L1 feature space, but silhouette alone does not imply biological validity.}
+\label{fig:silhouette-heatmap}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Silhouette score by method. Bold indicates the highest value per row. A dash indicates that AP Full was skipped. HDBSCAN scores are not directly comparable with AP scores; see Section~\ref{sec:silhouette}.}
+\label{tab:silhouette}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lcccccccc}
+\toprule
+Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
+\midrule
+\texttt{short\_comparison\_test} & \textbf{0.302} & 0.152 & 0.152 & 0.152 & 0.133 & 0.160 & 0.152 & 0.152 \\
+\texttt{comparison\_test} & \textbf{0.257} & 0.148 & 0.136 & 0.129 & 0.117 & 0.149 & 0.138 & 0.151 \\
+\texttt{mp\_mouse\_1\_jul} & 0.071 & 0.193 & 0.179 & \textbf{0.225} & 0.153 & 0.197 & 0.218 & 0.204 \\
+\texttt{control\_mouse\_1\_jul} & \textbf{0.408} & -- & 0.139 & 0.135 & 0.085 & 0.128 & 0.131 & 0.151 \\
+\texttt{control\_mouse\_1\_oct} & 0.121 & -- & 0.138 & \textbf{0.155} & 0.059 & 0.130 & 0.145 & 0.130 \\
+\texttt{mp\_mouse\_1\_oct} & \textbf{0.359} & -- & 0.217 & 0.207 & 0.135 & 0.209 & 0.212 & 0.221 \\
+\texttt{still\_test} & \textbf{0.317} & -- & 0.192 & 0.186 & 0.179 & 0.168 & 0.186 & 0.190 \\
+\texttt{moving\_test} & \textbf{0.580} & -- & 0.279 & 0.313 & 0.203 & 0.235 & 0.265 & 0.261 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Agreement with Full AP}
+
+Full AP is available for three datasets. Table~\ref{tab:ari} reports ARI against full AP. The strongest agreement is usually achieved by sampled AP variants, especially random, k-means, and stratified sampling. The same column abbreviations are used as above.
+
+\begin{table}[h]
+\centering
+\caption{ARI against full AP for datasets where full AP was run. AP full is omitted because it is the reference method.}
+\label{tab:ari}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lccccccc}
+\toprule
+Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
+\midrule
+\texttt{short\_comparison\_test} & 0.001 & \textbf{1.000} & \textbf{1.000} & 0.395 & 0.548 & \textbf{1.000} & \textbf{1.000} \\
+\texttt{comparison\_test} & 0.004 & 0.425 & 0.403 & 0.351 & 0.348 & \textbf{0.458} & 0.444 \\
+\texttt{mp\_mouse\_1\_jul} & 0.074 & \textbf{0.475} & 0.423 & 0.389 & 0.437 & 0.459 & 0.462 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/ari_vs_ap_full.png}
+\caption{Agreement with full AP measured by ARI. HDBSCAN has low agreement with full AP because it optimizes a density-based objective rather than an exemplar-based AP objective.}
+\label{fig:ari-vs-ap}
+\end{figure}
+
+\subsection{Runtime}
+
+Table~\ref{tab:timing} reports wall-clock runtime on a single CPU core. AP Full is the slowest method and becomes impractical beyond $N \approx 20{,}000$. Among scalable methods, HDBSCAN and AP Two-level are the fastest; AP Sampled and AP Coreset are moderate; AP Sparse is the slowest due to the large approximate KNN graph construction step. Timing data for AP K-Means and AP Stratified was not recorded in the current batch run and is omitted from the table.
+
+\begin{table}[h]
+\centering
+\caption{Wall-clock runtime per dataset and method on a single CPU core. A dash indicates AP Full was skipped. The $\sim$ symbol denotes approximate timing for AP Full, which was not run in the main batch.}
+\label{tab:timing}
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lrcccccc}
+\toprule
+Dataset & $N$ & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP Sparse\,} \\
+\midrule
+\texttt{short\_comparison\_test} & 1,195 & $<$0.1\,s & 0.6\,s & 0.3\,s & 0.2\,s & 0.2\,s & 0.3\,s \\
+\texttt{comparison\_test} & 13,799 & 2.3\,s & $\sim$135\,s & 30\,s & 25\,s & 17\,s & 16\,s \\
+\texttt{mp\_mouse\_1\_jul} & 19,714 & 1.7\,s & $\sim$390\,s & 33\,s & 29\,s & 26\,s & 61\,s \\
+\texttt{control\_mouse\_1\_jul} & 23,902 & 3.9\,s & -- & 18\,s & 26\,s & 29\,s & 81\,s \\
+\texttt{control\_mouse\_1\_oct} & 23,906 & 2.8\,s & -- & 20\,s & 25\,s & 35\,s & 113\,s \\
+\texttt{mp\_mouse\_1\_oct} & 23,866 & 1.7\,s & -- & 34\,s & 26\,s & 28\,s & 190\,s \\
+\texttt{still\_test} & 23,877 & 1.7\,s & -- & 24\,s & 31\,s & 26\,s & 54\,s \\
+\texttt{moving\_test} & 47,028 & 5.7\,s & -- & 51\,s & 35\,s & 71\,s & 172\,s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Main Observations}
+
+\begin{enumerate}
+    \item \textbf{Full AP is the reference but does not scale.} It closely matches the MATLAB objective but requires dense pairwise affinities, so it is only practical for small or medium datasets.
+    \item \textbf{Random-sampled AP is a strong default.} It is much faster than full AP and has the highest or near-highest ARI against full AP in the available comparisons.
+    \item \textbf{K-means and stratified sampling are promising.} These methods often match or exceed random sampling in ARI, suggesting that sample selection matters.
+    \item \textbf{Coreset sampling can improve silhouette.} On \texttt{mp\_mouse\_1\_jul} and \texttt{moving\_test}, coreset AP gives higher silhouette than random sampled AP, likely because it covers the feature space more broadly.
+    \item \textbf{Sparse AP currently over-fragments.} It often produces many more clusters than full AP or sampled AP, suggesting that the KNN graph degree and preference should be tuned further.
+    \item \textbf{HDBSCAN is not a MATLAB replacement.} It sometimes has high silhouette, especially in moving/still tests, but its ARI against full AP is very low and it labels many points as noise.
+\end{enumerate}
+
+\section{Discussion}
+
+\subsection{Recommended Current Method}
+
+For replacing the MATLAB AP pipeline while keeping similar behavior, the best current default is random-sampled AP. It is fast (18--51\,s across all datasets in Table~\ref{tab:timing}) and achieves ARI of 1.000, 0.425, and 0.475 on the three datasets where full AP is available (Table~\ref{tab:ari}). K-means-sampled AP is a strong alternative: it achieves the highest ARI on \texttt{comparison\_test} (0.458 vs.\ 0.425 for random), and stratified AP performs similarly. Full AP should be retained as the reference method for datasets small enough to run it.
+
+\subsection{Implications for Parkinsonian Behavior Analysis}
+
+For Parkinson's disease progression analysis, rare behavioral modes may be scientifically important. Random sampling can underrepresent rare windows, especially if tremor-like or impaired-movement motifs occupy a small fraction of the recording. For this reason, coreset and stratified sampling are especially relevant. They are not merely speed optimizations; they also change which parts of the behavioral space are represented during exemplar selection.
+
+\subsection{Limitations}
+
+The current representation intentionally discards temporal ordering inside each 300 ms window. Two windows with the same amplitude distribution but different within-window temporal sequence will have identical histograms. This may be limiting for tremor or rhythmic gait features. In addition, fixed MATLAB-derived bin edges may not be optimal for MitoPark mice if disease changes the dynamic range of motion. Finally, silhouette score is only a geometric clustering measure; it does not directly validate biological interpretability.
+
+\section{Conclusion}
+
+The current \texttt{Python\_Pipeline} reproduces the core MATLAB representation using 300 ms windows, channel-wise histograms, CDF-transformed features, and EMD-like distances. The main computational improvement is to avoid full dense $N \times N$ AP whenever possible. Among scalable AP variants, random-sampled AP currently provides the strongest practical balance between speed and agreement with full AP, while k-means and stratified sampling are strong candidates for future refinement. HDBSCAN remains useful as an exploratory density-based baseline but should not be interpreted as a direct replacement for the MATLAB AP workflow.
+
+\section*{Implementation Notes}
+
+This document is based on the current local contents of:
+
+\begin{itemize}
+    \item \texttt{Python\_Pipeline/scripts/prepare\_test\_data.py}
+    \item \texttt{Python\_Pipeline/scripts/clustering\_pipeline.py}
+    \item \texttt{Python\_Pipeline/scripts/batch\_compare.py}
+    \item \texttt{Python\_Pipeline/scripts/compare\_results.py}
+    \item \texttt{Python\_Pipeline/results/method\_comparison.csv}
+    \item \texttt{Python\_Pipeline/results/method\_comparison\_report.txt}
+\end{itemize}
+
+\begin{thebibliography}{9}
+
+\bibitem{frey2007}
+Frey, B.~J. and Dueck, D. (2007).
+Clustering by passing messages between data points.
+\textit{Science}, 315(5814):972--976.
+
+\bibitem{johnson2021}
+Johnson, J., Douze, M., and J\'{e}gou, H. (2021).
+Billion-scale similarity search with {GPU}s.
+\textit{IEEE Transactions on Big Data}, 7(3):535--547.
+
+\bibitem{campello2013}
+Campello, R.~J.~G.~B., Moulavi, D., and Sander, J. (2013).
+Density-based clustering based on hierarchical density estimates.
+In \textit{Pacific-Asia Conference on Knowledge Discovery and Data Mining}, pages 160--172.
+
+\bibitem{rubner2000}
+Rubner, Y., Tomasi, C., and Guibas, L.~J. (2000).
+The earth mover's distance as a metric for image retrieval.
+\textit{International Journal of Computer Vision}, 40(2):99--121.
+
+\bibitem{rousseeuw1987}
+Rousseeuw, P.~J. (1987).
+Silhouettes: A graphical aid to the interpretation and validation of cluster analysis.
+\textit{Journal of Computational and Applied Mathematics}, 20:53--65.
+
+\bibitem{hubert1985}
+Hubert, L. and Arabie, P. (1985).
+Comparing partitions.
+\textit{Journal of Classification}, 2(1):193--218.
+
+\bibitem{pedregosa2011}
+Pedregosa, F. et al. (2011).
+Scikit-learn: Machine learning in {Python}.
+\textit{Journal of Machine Learning Research}, 12:2825--2830.
+
+\end{thebibliography}
+
+\end{document}

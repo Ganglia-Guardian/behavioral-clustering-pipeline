@@ -7,10 +7,24 @@ Output format matches the original Matlab pipeline — all existing visualizatio
 
 ---
 
+## Paper
+
+A full write-up of the pipeline design, AP algorithm details, and method comparison results is available as a PDF:
+
+**[overleaf_paper/main.pdf](overleaf_paper/main.pdf)**
+
+Source: `overleaf_paper/main.tex` (compile with `pdflatex main.tex` twice).
+
+---
+
 ## Folder Structure
 
 ```
 Python_Pipeline/
+├── overleaf_paper/
+│   ├── main.tex             # LaTeX source
+│   ├── main.pdf             # Compiled PDF
+│   └── figures/             # All figures used in the paper
 ├── scripts/
 │   ├── clustering_pipeline.py   # Main pipeline
 │   ├── batch_compare.py         # Compare all methods side by side
