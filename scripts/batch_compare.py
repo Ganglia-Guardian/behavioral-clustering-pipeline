@@ -1,24 +1,12 @@
 """
-batch_compare.py
-----------------
-Runs all three clustering methods on every lab dataset and saves a
-side-by-side comparison.
+batch_compare.py  —  run all clustering methods on every dataset and save results.
 
-Methods compared
-----------------
-  1. HDBSCAN       — UMAP + HDBSCAN (current default, scalable)
-  2. AP full       — Full N×N affinity matrix + AP (exact, but memory-heavy)
-  3. AP sampled    — AP on 6,000-window subset, then assign all via FAISS
+Results go to results/<dataset>/Cluster_detail_results_<method>.csv
+plus a summary in results/method_comparison.csv.
 
-Results are saved to:
-  results/<dataset>/Cluster_detail_results_hdbscan.csv
-  results/<dataset>/Cluster_detail_results_ap_full.csv
-  results/<dataset>/Cluster_detail_results_ap_sampled.csv
-  results/method_comparison.csv      (machine-readable summary)
-  results/method_comparison_report.txt  (human-readable report)
-
-Usage (from repo root):
+Usage:
     python3 scripts/batch_compare.py
+    python3 scripts/batch_compare.py --force ap_sampled   # re-run specific methods
 """
 
 import sys
@@ -30,9 +18,9 @@ from pathlib import Path
 from tqdm import tqdm
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT   = SCRIPTS_DIR.parent
+REPO_ROOT = SCRIPTS_DIR.parent
 RESULTS_DIR = REPO_ROOT / "results"
-LAB_DATA    = REPO_ROOT.parent / "lab_data"
+LAB_DATA = REPO_ROOT.parent / "lab_data"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -109,12 +97,11 @@ DATASETS = [
     },
 ]
 
-AP_SAMPLE_SIZE  = 10_000  # windows used for AP sampled
-AP_FULL_MAX_N   = 20_000  # only run AP full when N <= this (~3×N²×8 bytes needed for AP internals)
-AP_SPARSE_K     = 1_000   # K-NN graph degree for Sparse AP
+AP_SAMPLE_SIZE = 10_000
+AP_FULL_MAX_N = 20_000   # ~3×N²×8 bytes needed for AP internals at this N
+AP_SPARSE_K = 1_000
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def hr(title: str, width: int = 62) -> None:
     print(f"\n{'─' * width}")
@@ -130,30 +117,28 @@ def cluster_stats(labels: np.ndarray) -> dict:
     unique, counts = np.unique(valid, return_counts=True)
     return {
         "n_clusters": len(unique),
-        "n_noise":    int((labels == -1).sum()),
-        "mean":       float(counts.mean()),
-        "std":        float(counts.std()),
-        "min":        int(counts.min()),
-        "max":        int(counts.max()),
+        "n_noise": int((labels == -1).sum()),
+        "mean": float(counts.mean()),
+        "std": float(counts.std()),
+        "min": int(counts.min()),
+        "max": int(counts.max()),
     }
 
 
 def save_result_csv(labels, timestamps, folder_names, n_windows, out_path):
-    mid         = WIN_SIZE // 2
-    win_ts      = timestamps[mid::WIN_SIZE][:n_windows]
+    mid = WIN_SIZE // 2
+    win_ts = timestamps[mid::WIN_SIZE][:n_windows]
     win_folders = folder_names[::WIN_SIZE][:n_windows]
     cluster_idx = np.where(labels < 0, 0, labels + 1)
     pd.DataFrame({
-        "ClusterIdx":  cluster_idx,
-        "Timestamp":   win_ts,
+        "ClusterIdx": cluster_idx,
+        "Timestamp": win_ts,
         "Folder_Name": win_folders,
     }).to_csv(str(out_path), index=False)
 
 
-# ── Load or prepare data ──────────────────────────────────────────────────────
-
 def load_data(cfg: dict, out_dir: Path) -> tuple:
-    """Prepare CSV if needed, then load into feature matrix. Returns (hist, ts, folders, cdf, channel_sizes)."""
+    """Prepare CSV if needed, load and featurize. Returns (hist, ts, folders, cdf, channel_sizes)."""
     clean_csv = out_dir / "combined_harp_data_cleaned.csv"
     if not clean_csv.exists():
         print(f"  Preparing data ...")
@@ -164,7 +149,7 @@ def load_data(cfg: dict, out_dir: Path) -> tuple:
     with contextlib.redirect_stdout(buf):
         raw, ts, folders = load_cleaned_motion(str(clean_csv))
         sensor = process_motion(raw)
-        edges  = ARENA_BIN_EDGES[cfg["arena"]]
+        edges = ARENA_BIN_EDGES[cfg["arena"]]
 
     channel_sizes = [len(e) - 1 for e in edges]
     with contextlib.redirect_stdout(buf):
@@ -174,8 +159,6 @@ def load_data(cfg: dict, out_dir: Path) -> tuple:
     return hist, ts, folders, cdf, channel_sizes
 
 
-# ── Load cached result ────────────────────────────────────────────────────────
-
 def load_cached(out_path: Path, cdf: np.ndarray, N: int) -> dict | None:
     """Read existing result CSV and recompute metrics. Returns None if unreadable."""
     try:
@@ -184,31 +167,29 @@ def load_cached(out_path: Path, cdf: np.ndarray, N: int) -> dict | None:
             return None
         cluster_idx = df["ClusterIdx"].values.astype(int)
         labels = np.where(cluster_idx == 0, -1, cluster_idx - 1)
-        stats  = cluster_stats(labels)
-        sil    = _silhouette(cdf, labels)
+        stats = cluster_stats(labels)
+        sil = _silhouette(cdf, labels)
         return {
-            "status":    "ok",
+            "status": "ok",
             "n_windows": N,
             "n_clusters": stats["n_clusters"],
-            "n_noise":    stats["n_noise"],
-            "noise_pct":  round(100 * stats["n_noise"] / N, 2),
-            "sil":        round(sil, 4) if not np.isnan(sil) else float("nan"),
-            "mean":       round(stats["mean"], 1),
-            "std":        round(stats["std"], 1),
-            "min":        stats["min"],
-            "max":        stats["max"],
-            "t_dist":     float("nan"),
-            "t_algo":     float("nan"),
-            "t_s":        float("nan"),
+            "n_noise": stats["n_noise"],
+            "noise_pct": round(100 * stats["n_noise"] / N, 2),
+            "sil": round(sil, 4) if not np.isnan(sil) else float("nan"),
+            "mean": round(stats["mean"], 1),
+            "std": round(stats["std"], 1),
+            "min": stats["min"],
+            "max": stats["max"],
+            "t_dist": float("nan"),
+            "t_algo": float("nan"),
+            "t_s": float("nan"),
             "preference": None,
-            "labels":     labels,
-            "cached":     True,
+            "labels": labels,
+            "cached": True,
         }
     except Exception:
         return None
 
-
-# ── Run one method ────────────────────────────────────────────────────────────
 
 def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
                ts, folders, preference: float = None) -> dict:
@@ -251,27 +232,27 @@ def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
                 raise ValueError(f"Unknown method: {method}")
 
         elapsed = time.perf_counter() - t0
-        sil     = _silhouette(cdf, labels)
-        stats   = cluster_stats(labels)
+        sil = _silhouette(cdf, labels)
+        stats = cluster_stats(labels)
         save_result_csv(labels, ts, folders, N, out_path)
 
         return {
-            "method":     method,
-            "status":     "ok",
-            "n_windows":       N,
-            "n_clusters":      stats["n_clusters"],
-            "n_noise":         stats["n_noise"],
-            "noise_pct":       round(100 * stats["n_noise"] / N, 2),
-            "sil":             round(sil, 4) if not np.isnan(sil) else float("nan"),
-            "mean":            round(stats["mean"], 1),
-            "std":             round(stats["std"], 1),
-            "min":             stats["min"],
-            "max":             stats["max"],
-            "t_dist":          _timing.get("t_dist", float("nan")),
-            "t_algo":          _timing.get("t_algo", float("nan")),
-            "t_s":             round(elapsed, 2),
-            "preference":      _timing.get("preference", None),
-            "labels":          labels,
+            "method": method,
+            "status": "ok",
+            "n_windows": N,
+            "n_clusters": stats["n_clusters"],
+            "n_noise": stats["n_noise"],
+            "noise_pct": round(100 * stats["n_noise"] / N, 2),
+            "sil": round(sil, 4) if not np.isnan(sil) else float("nan"),
+            "mean": round(stats["mean"], 1),
+            "std": round(stats["std"], 1),
+            "min": stats["min"],
+            "max": stats["max"],
+            "t_dist": _timing.get("t_dist", float("nan")),
+            "t_algo": _timing.get("t_algo", float("nan")),
+            "t_s": round(elapsed, 2),
+            "preference": _timing.get("preference", None),
+            "labels": labels,
         }
     except MemoryError:
         elapsed = time.perf_counter() - t0
@@ -285,8 +266,6 @@ def run_method(method: str, hist, cdf, channel_sizes, mcs: int, out_path: Path,
         return {"method": method, "status": "error", "error": str(e),
                 "n_windows": N, "t_s": round(elapsed, 2)}
 
-
-# ── Print result row ──────────────────────────────────────────────────────────
 
 def _format_result(m: dict) -> str:
     if m.get("status") != "ok":
@@ -308,8 +287,6 @@ def print_result(m: dict) -> None:
     print("    " + _format_result(m))
 
 
-# ── RI / ARI vs AP full ───────────────────────────────────────────────────────
-
 def _compute_rand_indices(dataset_results: list) -> None:
     """Compute RI and ARI vs ap_full for each method. Modifies dicts in-place."""
     from sklearn.metrics import adjusted_rand_score
@@ -328,10 +305,10 @@ def _compute_rand_indices(dataset_results: list) -> None:
             m.setdefault("ri_n_excluded", 0)
             continue
 
-        ref_labels  = np.array(ref["labels"])
+        ref_labels = np.array(ref["labels"])
         pred_labels = np.array(m["labels"])
 
-        valid      = pred_labels >= 0
+        valid = pred_labels >= 0
         n_excluded = int((~valid).sum())
 
         if valid.sum() < 2 or len(set(pred_labels[valid])) < 2:
@@ -340,12 +317,10 @@ def _compute_rand_indices(dataset_results: list) -> None:
             continue
 
         ref_v, pred_v = ref_labels[valid], pred_labels[valid]
-        m["ari"]           = round(float(adjusted_rand_score(ref_v, pred_v)), 4)
-        m["ri"]            = round(float(rand_score(ref_v, pred_v)), 4) if rand_score else float("nan")
+        m["ari"] = round(float(adjusted_rand_score(ref_v, pred_v)), 4)
+        m["ri"] = round(float(rand_score(ref_v, pred_v)), 4) if rand_score else float("nan")
         m["ri_n_excluded"] = n_excluded
 
-
-# ── Summary report ────────────────────────────────────────────────────────────
 
 def write_comparison_report(all_rows: list, out_path: Path) -> None:
     lines = []
@@ -369,7 +344,7 @@ def write_comparison_report(all_rows: list, out_path: Path) -> None:
         lines.append(f"  {ds}  (N = {n_str} windows)")
         lines.append("─" * 85)
 
-        cols  = ["Method", "Clusters", "Noise%", "Silhouette", "Quality", "ARI vs ap_full", "Total(s)"]
+        cols = ["Method", "Clusters", "Noise%", "Silhouette", "Quality", "ARI vs ap_full", "Total(s)"]
         col_w = [14, 10, 8, 12, 12, 16, 9]
         lines.append("  " + "".join(c.ljust(w) for c, w in zip(cols, col_w)))
         lines.append("  " + "-" * sum(col_w))
@@ -401,8 +376,6 @@ def write_comparison_report(all_rows: list, out_path: Path) -> None:
     print("\n".join(lines))
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -412,9 +385,9 @@ def main():
     args = parser.parse_args()
 
     if args.force is None:
-        force_methods = set()          # cache mode: skip nothing
+        force_methods = set()       # use cache for everything
     elif len(args.force) == 0:
-        force_methods = None           # None = force everything
+        force_methods = None        # None = re-run all
     else:
         force_methods = set(args.force)
 
@@ -429,7 +402,7 @@ def main():
         print("  Cache: ENABLED (use --force to re-run)")
 
     all_rows = []
-    methods  = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_twolevel", "ap_kmeans", "ap_stratified"]
+    methods = ["hdbscan", "ap_full", "ap_sampled", "ap_coreset", "ap_sparse", "ap_twolevel", "ap_kmeans", "ap_stratified"]
 
     dataset_pbar = tqdm(DATASETS, desc="Datasets", unit="dataset", position=0)
     for cfg in dataset_pbar:

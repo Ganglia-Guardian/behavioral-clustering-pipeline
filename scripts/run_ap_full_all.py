@@ -17,9 +17,9 @@ import pandas as pd
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
-REPO_ROOT   = SCRIPTS_DIR.parent
+REPO_ROOT = SCRIPTS_DIR.parent
 RESULTS_DIR = REPO_ROOT / "results"
-LAB_DATA    = REPO_ROOT.parent / "lab_data"
+LAB_DATA = REPO_ROOT.parent / "lab_data"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 

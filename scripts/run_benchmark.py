@@ -24,19 +24,19 @@ import pandas as pd
 from pathlib import Path
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
-# ── paths ─────────────────────────────────────────────────────────────────────
-REPO_ROOT   = Path(__file__).resolve().parent.parent   # Python_Pipeline/
-SCRIPTS_DIR = Path(__file__).resolve().parent          # Python_Pipeline/scripts/
-OUTPUT_DIR  = REPO_ROOT / "test_outputs"               # Python_Pipeline/test_outputs/
 
-CLEAN_CSV   = OUTPUT_DIR / "combined_harp_data_cleaned.csv"
+REPO_ROOT = Path(__file__).resolve().parent.parent   # Python_Pipeline/
+SCRIPTS_DIR = Path(__file__).resolve().parent          # Python_Pipeline/scripts/
+OUTPUT_DIR = REPO_ROOT / "test_outputs"               # Python_Pipeline/test_outputs/
+
+CLEAN_CSV = OUTPUT_DIR / "combined_harp_data_cleaned.csv"
 OUT_HDBSCAN = OUTPUT_DIR / "benchmark_hdbscan.csv"
-OUT_AP      = OUTPUT_DIR / "benchmark_ap.csv"
+OUT_AP = OUTPUT_DIR / "benchmark_ap.csv"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def hr(title: str) -> None:
     print(f"\n{'─' * 60}")
@@ -72,7 +72,7 @@ def ari_nmi(a: np.ndarray, b: np.ndarray):
             normalized_mutual_info_score(a[valid], b[valid], average_method="arithmetic"))
 
 
-# ── load Matlab baseline ──────────────────────────────────────────────────────
+
 
 def load_matlab_labels(mat_path: Path) -> np.ndarray:
     import scipy.io
@@ -81,7 +81,7 @@ def load_matlab_labels(mat_path: Path) -> np.ndarray:
     return c["idx"].flatten().astype(int)
 
 
-# ── run Python pipeline ───────────────────────────────────────────────────────
+
 
 def run_python(use_ap: bool, out_path: Path) -> tuple:
     """Returns (labels, elapsed_seconds, peak_bytes)."""
@@ -125,7 +125,7 @@ def run_python(use_ap: bool, out_path: Path) -> tuple:
     return labels, elapsed, peak
 
 
-# ── Matlab runtime estimate ───────────────────────────────────────────────────
+
 
 def matlab_estimate(n_windows: int) -> dict:
     """
@@ -144,7 +144,7 @@ def matlab_estimate(n_windows: int) -> dict:
     }
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+
 
 def main():
     parser = argparse.ArgumentParser(
