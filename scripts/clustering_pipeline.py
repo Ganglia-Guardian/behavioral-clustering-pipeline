@@ -33,8 +33,8 @@ from tqdm import tqdm
 class _Spinner:
     """Context manager: live spinner + elapsed time during silent sklearn calls."""
     def __init__(self, msg: str):
-        self._msg    = msg
-        self._stop   = threading.Event()
+        self._msg = msg
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def __enter__(self):
@@ -110,11 +110,11 @@ def load_cleaned_motion(csv_path: str) -> tuple:
     motion_df = df[df["RegisterAddress"] == 34].reset_index(drop=True)
     print(f"      Motion rows: {len(motion_df):,}")
 
-    timestamps   = motion_df["Timestamp"].values.astype(np.float64)
+    timestamps = motion_df["Timestamp"].values.astype(np.float64)
     fn_col = "Folder_Name" if "Folder_Name" in motion_df.columns else "DataElement10"
     folder_names = motion_df[fn_col].values
 
-    # DataElement0 through DataElement9 sit at column indices 3–12
+    # DataElement0–9 are at column indices 3–12
     raw_motion = motion_df.iloc[:, 3:13].values.astype(np.float64)
 
     return raw_motion, timestamps, folder_names
@@ -136,31 +136,25 @@ def process_motion(raw_motion: np.ndarray) -> dict:
     """Scale ADC → physical units, median filter (k=7), 0.5 Hz high-pass (filtfilt)."""
     print("[2/5] Signal processing (filtering, gravity separation)...")
 
-    acc = raw_motion[:, 0:3] * (AC_RNG  / 32768.0)
+    acc = raw_motion[:, 0:3] * (AC_RNG / 32768.0)
     gyr = raw_motion[:, 3:6] * (GYR_RNG / 32768.0)
 
-    # Clipped-boundary median filter — matches Matlab's myMedFilt1(x, 7)
-    x      = _medfilt_clip(acc[:, 0], 7)
-    y      = _medfilt_clip(-acc[:, 1], 7)   # negative sign: sensor orientation
-    z      = _medfilt_clip(acc[:, 2], 7)
+    # clipped-boundary median filter — matches Matlab's myMedFilt1(x, 7)
+    x = _medfilt_clip(acc[:, 0], 7)
+    y = _medfilt_clip(-acc[:, 1], 7)   # negative sign: sensor orientation
+    z = _medfilt_clip(acc[:, 2], 7)
     z_gyro = _medfilt_clip(gyr[:, 2], 7)
 
-    # Zero-phase 1st-order Butterworth high-pass, cut-off 0.5 Hz.
-    # filtfilt matches the online Matlab pipeline (processDataOnlineJT_vitor_JT.m).
-    b, a  = butter(1, 0.5 / (FS / 2.0), btype="high")
-    x_BA  = filtfilt(b, a, x)
-    y_BA  = filtfilt(b, a, y)
-    z_BA  = filtfilt(b, a, z)
+    # zero-phase 1st-order Butterworth high-pass, cut-off 0.5 Hz
+    b, a = butter(1, 0.5 / (FS / 2.0), btype="high")
+    x_BA = filtfilt(b, a, x)
+    y_BA = filtfilt(b, a, y)
+    z_BA = filtfilt(b, a, z)
 
-    y_GA      = y - y_BA
+    y_GA = y - y_BA
     tot_accel = np.sqrt(x_BA**2 + y_BA**2 + z_BA**2)
 
-    return {
-        "y_GA":      y_GA,
-        "z":         z,
-        "z_gyro":    z_gyro,
-        "tot_accel": tot_accel,
-    }
+    return {"y_GA": y_GA, "z": z, "z_gyro": z_gyro, "tot_accel": tot_accel}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -185,7 +179,7 @@ def extract_histogram_features(sensor: dict, bin_edges: list) -> np.ndarray:
     N_samples = len(channels[0])
     N_windows = N_samples // WIN_SIZE
 
-    total_bins  = sum(len(e) - 1 for e in bin_edges)
+    total_bins = sum(len(e) - 1 for e in bin_edges)
     hist_matrix = np.zeros((N_windows, total_bins), dtype=np.float32)
 
     col_start = 0
@@ -381,6 +375,7 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
         prev_exemplar_set = exemplar_set
 
         ap_pbar.set_postfix(exemplars=len(exemplar_set), stable=stable_count)
+        # print(f"  it={it}  exemplars={len(exemplar_set)}")
     else:
         print(f"      WARNING: did not converge in {max_iter} iterations")
 
@@ -399,8 +394,8 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
           f"T_algo: {t_algo:.1f}s  Total: {t_dist + t_algo:.1f}s")
 
     if _timing is not None:
-        _timing['t_dist']     = round(t_dist, 2)
-        _timing['t_algo']     = round(t_algo, 2)
+        _timing['t_dist'] = round(t_dist, 2)
+        _timing['t_algo'] = round(t_algo, 2)
         _timing['preference'] = preference
 
     return labels
@@ -467,7 +462,8 @@ def _faiss_assign(cdf_all: np.ndarray, exemplar_indices: np.ndarray) -> np.ndarr
 
 
 def _estimate_min_affinity(cdf_all: np.ndarray, n_pairs: int = 500_000) -> float:
-    """Estimate global min(affinity) = -max(L1²) from 500k random pairs across all N windows."""
+    # 500k pairs is overkill for small datasets but it's fast enough that it's
+    # not worth adding a conditional. tried 50k once and got slightly off preference.
     N = cdf_all.shape[0]
     rng = np.random.default_rng(42)
     i = rng.integers(0, N, n_pairs)
@@ -516,6 +512,7 @@ def cluster_ap_full(hist_matrix: np.ndarray,
     t_dist = time.time() - t0
 
     if preference is None:
+        # median causes cluster explosion with our coarse bins (learned this the hard way)
         preference = float(affinity.min())
         print(f"      Preference: {preference:.4f}  (auto = min similarity)")
     else:
@@ -538,8 +535,8 @@ def cluster_ap_full(hist_matrix: np.ndarray,
 
     print(f"      AP done in {time.time() - t0:.1f}s  |  clusters: {len(set(labels))}")
     if _timing is not None:
-        _timing['t_dist']     = round(t_dist, 2)
-        _timing['t_algo']     = round(t_algo, 2)
+        _timing['t_dist'] = round(t_dist, 2)
+        _timing['t_algo'] = round(t_algo, 2)
         _timing['preference'] = preference
     return labels
 
@@ -589,23 +586,23 @@ def _stratified_sample(cdf_features: np.ndarray, K: int,
 
     # Stage 2: equal sampling per stratum
     per_stratum = max(1, K // n_strata)
-    selected    = []
-    deficit     = 0  # windows we couldn't take from small strata
+    selected = []
+    deficit = 0
 
     for s in range(n_strata):
-        idx    = np.where(stratum_ids == s)[0]
+        idx = np.where(stratum_ids == s)[0]
         n_take = min(len(idx), per_stratum)
         deficit += per_stratum - n_take
-        chosen  = rng.choice(idx, n_take, replace=False)
+        chosen = rng.choice(idx, n_take, replace=False)
         selected.append(chosen)
 
     selected = np.concatenate(selected)
 
-    # Fill deficit from the full pool (excluding already selected)
+    # top up from the full pool if some strata were too small
     if deficit > 0:
-        already  = set(selected.tolist())
-        pool     = np.array([i for i in range(N) if i not in already], dtype=np.int64)
-        n_fill   = min(deficit, len(pool))
+        already = set(selected.tolist())
+        pool = np.array([i for i in range(N) if i not in already], dtype=np.int64)
+        n_fill = min(deficit, len(pool))
         fill_idx = rng.choice(pool, n_fill, replace=False)
         selected = np.concatenate([selected, fill_idx])
 
@@ -891,6 +888,7 @@ def cluster_ap_twolevel(hist_matrix: np.ndarray,
 
     if n_blocks is None:
         n_blocks = max(4, N // 2500)
+        # TODO: could auto-tune this based on available RAM instead of window count
 
     print(f"[4/5] Two-level AP  (N={N:,}, M={n_blocks} blocks, "
           f"~{N // n_blocks:,} windows/block)")
@@ -989,8 +987,8 @@ def cluster_ap_twolevel(hist_matrix: np.ndarray,
           f"T_dist: {t_dist_all:.1f}s  T_AP: {t_ap_all:.1f}s  Total: {t_total:.1f}s")
 
     if _timing is not None:
-        _timing['t_dist']     = round(t_dist_all, 2)
-        _timing['t_algo']     = round(t_ap_all,   2)
+        _timing['t_dist'] = round(t_dist_all, 2)
+        _timing['t_algo'] = round(t_ap_all, 2)
         _timing['preference'] = pref2
 
     return labels
