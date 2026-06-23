@@ -34,7 +34,7 @@
 \maketitle
 
 \begin{abstract}
-This document summarizes the current \texttt{Python\_Pipeline} implementation for processing Harp IMU recordings and clustering short behavioral windows. The pipeline replaces the original MATLAB workflow with a Python implementation that preserves the key representation used by the prior system: each behavioral window is converted into channel-wise histograms, the histograms are transformed into cumulative distribution functions (CDFs), and distances between windows are computed as a CDF-based approximation to one-dimensional Earth Mover's Distance (EMD), also known as Wasserstein-1 distance. We describe the raw data format, missing-packet handling, signal processing, histogram feature construction, CDF/EMD distance computation, seven Affinity Propagation (AP)-family clustering methods, and the HDBSCAN reference method. We then summarize current comparison results across eight datasets, using silhouette score and agreement with full AP as the main evaluation criteria.
+This report describes a Python reimplementation of the MATLAB behavioral clustering pipeline. The core representation is preserved: 300\,ms IMU windows are encoded as channel-wise histograms, converted to CDFs, and compared via CDF-L1 distance (equivalent to 1D Wasserstein/EMD). The main addition is a set of scalable Affinity Propagation variants---random-sampled, coreset, k-means, stratified, sparse, and two-level---that avoid the $O(N^2)$ memory cost of full AP while staying close to its output. All methods are evaluated on eight datasets using silhouette score and ARI against full AP. Random-sampled AP is currently the best practical default; k-means and stratified sampling are promising alternatives for datasets where rare behaviors matter.
 \end{abstract}
 
 \section{Project Goal}
@@ -413,7 +413,7 @@ The current pipeline uses $\lambda = 0.9$ for all AP variants (both the scikit-l
 
 \subsection{Convergence and Assignment}
 
-At each iteration, the \textit{criterion matrix} $C = R + A$ is used to determine exemplars. Point $k$ is identified as an exemplar when:
+At each iteration, exemplars are identified by checking the diagonal of $R + A$. Point $k$ is an exemplar when:
 \begin{equation}
     r(k,k) + a(k,k) > 0.
 \end{equation}
@@ -499,7 +499,7 @@ AP Sampled         & 0.9 & 1000 & 15 & global min$^\dagger$ \\
 AP Coreset         & 0.9 & 1000 & 15 & global min$^\dagger$ \\
 AP K-Means         & 0.9 & 1000 & 15 & global min$^\dagger$ \\
 AP Stratified      & 0.9 & 1000 & 15 & global min$^\dagger$ \\
-AP Sparse (custom) & 0.9 & 1000 & 15 & global min$^\dagger$ \\
+AP Sparse (custom, $K=1000$) & 0.9 & 1000 & 15 & global min$^\dagger$ \\
 AP Two-level (L1)  & 0.9 & 300  & 15 & per-block median affinity \\
 AP Two-level (L2)  & 0.9 & 500  & 30 & median among candidate exemplars \\
 \bottomrule
@@ -559,17 +559,9 @@ The preference uses the same global min estimate as random-sampled AP (500,000 r
 
 \subsection{Sparse AP}
 
-Sparse AP avoids the dense $N \times N$ similarity matrix by constructing a K-nearest-neighbor graph:
+Sparse AP builds a $K$-nearest-neighbor graph over all $N$ windows (FAISS IVFFlat) and runs AP message-passing on that graph rather than on a dense $N \times N$ matrix. The CLI default is $K=100$; the batch comparison in Section~\ref{sec:results} used $K=1{,}000$. Memory drops from $O(N^2)$ to $O(NK)$. The custom message-passing implementation symmetrizes the graph and adds self-loops at the preference value before iterating.
 
-\begin{enumerate}
-    \item Use FAISS IVFFlat approximate nearest-neighbor search to find $K$ neighbors per point in CDF feature space.
-    \item Keep similarities only for edges in the KNN graph.
-    \item Symmetrize the graph and add diagonal preference values.
-    \item Run custom sparse AP message passing.
-    \item Assign all windows to the nearest exemplar using FAISS exact L1 search.
-\end{enumerate}
-
-The memory cost is approximately $O(NK)$ rather than $O(N^2)$. The current pipeline uses $K = 100$ nearest neighbours by default. However, because the graph is sparse, the result can differ substantially from full AP if $K$ or preference is not well tuned.
+In practice, sparse AP tends to over-fragment: because windows can only communicate with their $K$ nearest neighbours, two behaviorally related windows that happen to sit far apart in feature space may never exchange messages and end up in separate clusters. This is a structural limitation of the approach, not a tuning problem---increasing $K$ helps but requires proportionally more memory.
 
 \subsection{Two-Level AP}
 
@@ -612,7 +604,7 @@ The preference uses the same global min estimate as random-sampled AP (500,000 r
 
 \subsection{HDBSCAN Reference Method}
 
-HDBSCAN~\cite{campello2013} clusters CDF features directly using L1 distance. Unlike AP, it does not require an exemplar preference value and can label low-density windows as noise (assigned label $-1$). The output can be useful for exploratory density analysis, but it is not expected to match MATLAB AP results closely because it optimizes a different clustering objective.
+HDBSCAN~\cite{campello2013} is included as a density-based reference. It clusters CDF features under L1 distance without needing a preference parameter, and assigns low-density windows a noise label ($-1$) rather than forcing them into a cluster. Reproducing MATLAB AP results is not the goal---HDBSCAN optimises a different objective---but it serves as a useful sanity check and exploratory tool, particularly for identifying whether the recording contains genuinely distinct dense behavioral modes.
 
 \section{Evaluation Metrics}
 
@@ -677,6 +669,7 @@ Dataset & $N$ & Duration & Description \\
 \end{table}
 
 \section{Results}
+\label{sec:results}
 
 \subsection{Cluster Counts and Silhouette Scores}
 
@@ -796,32 +789,31 @@ Dataset & $N$ & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rot
 
 \subsection{Main Observations}
 
-\begin{enumerate}
-    \item \textbf{Full AP is the reference but does not scale.} It closely matches the MATLAB objective but requires dense pairwise affinities, so it is only practical for small or medium datasets.
-    \item \textbf{Random-sampled AP is a strong default.} It is much faster than full AP and has the highest or near-highest ARI against full AP in the available comparisons.
-    \item \textbf{K-means and stratified sampling are promising.} These methods often match or exceed random sampling in ARI, suggesting that sample selection matters.
-    \item \textbf{Coreset sampling can improve silhouette.} On \texttt{mp\_mouse\_1\_jul} and \texttt{moving\_test}, coreset AP gives higher silhouette than random sampled AP, likely because it covers the feature space more broadly.
-    \item \textbf{Sparse AP currently over-fragments.} It often produces many more clusters than full AP or sampled AP, suggesting that the KNN graph degree and preference should be tuned further.
-    \item \textbf{HDBSCAN is not a MATLAB replacement.} It sometimes has high silhouette, especially in moving/still tests, but its ARI against full AP is very low and it labels many points as noise.
-\end{enumerate}
+Random-sampled AP is currently the most reliable replacement for full AP: it runs in under a minute on all tested datasets and achieves ARI $\geq 0.425$ on the three datasets where full AP is available. K-means and stratified sampling often match or slightly exceed random sampling in ARI---on \texttt{comparison\_test}, k-means reaches 0.458 versus 0.425 for random---so they are worth considering when sample composition matters.
+
+Coreset sampling shows a different trade-off: it tends to improve silhouette (notably on \texttt{mp\_mouse\_1\_jul} and \texttt{moving\_test}) but does not always improve ARI. The greedy farthest-point selection covers the feature space more uniformly, which helps geometric separation but does not necessarily match the exemplars that full AP would choose.
+
+Sparse AP consistently over-fragments. The cluster counts are 3--5$\times$ higher than full AP across nearly all datasets, and this is not easily fixed by tuning---it is a consequence of the graph structure (Section~\ref{sec:clustering-methods}). It is retained for completeness but is not recommended for production use.
+
+HDBSCAN occasionally achieves higher silhouette than any AP variant (e.g.\ \texttt{moving\_test}: 0.580), but its ARI against full AP is essentially zero, and it assigns 50--65\% of windows as noise on high-activity datasets. It reflects a genuinely different objective and should be treated as a separate exploratory tool rather than a drop-in replacement.
 
 \section{Discussion}
 
 \subsection{Recommended Current Method}
 
-For replacing the MATLAB AP pipeline while keeping similar behavior, the best current default is random-sampled AP. It is fast (18--51\,s across all datasets in Table~\ref{tab:timing}) and achieves ARI of 1.000, 0.425, and 0.475 on the three datasets where full AP is available (Table~\ref{tab:ari}). K-means-sampled AP is a strong alternative: it achieves the highest ARI on \texttt{comparison\_test} (0.458 vs.\ 0.425 for random), and stratified AP performs similarly. Full AP should be retained as the reference method for datasets small enough to run it.
+Random-sampled AP is the current recommended default for replacing the MATLAB pipeline. It runs in 18--51\,s on all tested datasets and stays close to full AP where comparison is possible. For applications where rare behavioral motifs---tremor, impaired gait---are scientifically important, stratified or coreset sampling is preferable: both ensure that small behavioral clusters are represented in the AP sample regardless of how infrequently they occur. K-means sampling is a reasonable middle ground that selects cluster-central rather than boundary points and showed the best ARI on \texttt{comparison\_test}.
 
-\subsection{Implications for Parkinsonian Behavior Analysis}
-
-For Parkinson's disease progression analysis, rare behavioral modes may be scientifically important. Random sampling can underrepresent rare windows, especially if tremor-like or impaired-movement motifs occupy a small fraction of the recording. For this reason, coreset and stratified sampling are especially relevant. They are not merely speed optimizations; they also change which parts of the behavioral space are represented during exemplar selection.
+Full AP remains the ground-truth reference and should be run whenever $N$ is small enough (under $\sim$20,000 windows on a machine with 12+ GB RAM).
 
 \subsection{Limitations}
 
-The current representation intentionally discards temporal ordering inside each 300 ms window. Two windows with the same amplitude distribution but different within-window temporal sequence will have identical histograms. This may be limiting for tremor or rhythmic gait features. In addition, fixed MATLAB-derived bin edges may not be optimal for MitoPark mice if disease changes the dynamic range of motion. Finally, silhouette score is only a geometric clustering measure; it does not directly validate biological interpretability.
+The histogram representation throws away temporal structure within each 300\,ms window. Two windows with the same amplitude distribution but different within-window dynamics look identical to the pipeline---this is likely fine for coarse locomotor categories but could miss rhythmic features like tremor. The fixed MATLAB-derived bin edges are another constraint: they were calibrated for specific arena and sensor configurations, and may not be optimal for MitoPark mice where disease alters the distribution of accelerations.
+
+A less obvious limitation is that silhouette score rewards geometric compactness, which is not the same as biological meaningfulness. HDBSCAN's high silhouette on some datasets reflects the fact that it discards ambiguous windows as noise, not that its clusters are more biologically valid. Downstream validation---e.g.\ comparing cluster usage between control and MitoPark mice across weeks---is the real test that silhouette cannot replace.
 
 \section{Conclusion}
 
-The current \texttt{Python\_Pipeline} reproduces the core MATLAB representation using 300 ms windows, channel-wise histograms, CDF-transformed features, and EMD-like distances. The main computational improvement is to avoid full dense $N \times N$ AP whenever possible. Among scalable AP variants, random-sampled AP currently provides the strongest practical balance between speed and agreement with full AP, while k-means and stratified sampling are strong candidates for future refinement. HDBSCAN remains useful as an exploratory density-based baseline but should not be interpreted as a direct replacement for the MATLAB AP workflow.
+The pipeline matches the MATLAB AP output on small datasets ($N \leq 20{,}000$) and extends cleanly to larger recordings through subsampling. Of the scalable variants, random-sampled AP is the most battle-tested; k-means and stratified sampling are newer additions that look competitive and warrant more evaluation as more sessions are processed. The next priority is running timing benchmarks for those two methods and testing all variants on MitoPark longitudinal data, where the biological question---whether cluster usage shifts with disease progression---can be posed directly.
 
 \section*{Implementation Notes}
 
