@@ -1,0 +1,5 @@
+dataset,method,n_windows,n_clusters,cluster_mean,cluster_min,cluster_max,cluster_sizes,t_s
+short_comparison_test,histogram_ap_full,1195,9,132.8,77,198,"[198, 176, 173, 170, 108, 106, 103, 84, 77]",
+short_comparison_test,4d_sliced_w1,1195,4,298.8,134,490,"[490, 433, 138, 134]",1.4
+short_comparison_test,4d_exact_emd,1195,4,298.8,144,581,"[581, 298, 172, 144]",216.1
+short_comparison_test,4d_sinkhorn,1195,6,199.2,64,381,"[381, 230, 201, 166, 153, 64]",289.9

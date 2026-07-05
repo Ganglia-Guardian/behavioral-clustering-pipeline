@@ -1,0 +1,9 @@
+dataset,n_windows,K,spearman_rho,flip_rate_pct,ari_histogram,ari_empirical,ari_hist_vs_emp,sil_histogram,sil_empirical,winner,delta_ari,status
+comparison_test,13799.0,33.0,0.8878,14.4,0.3648,0.162,0.1516,0.1512,0.0816,histogram,-0.2028,
+control_mouse_1_jul,,,,,,,,,,,,no ap_full result
+control_mouse_1_oct,,,,,,,,,,,,no ap_full result
+moving_test,,,,,,,,,,,,no ap_full result
+mp_mouse_1_jul,19714.0,41.0,0.8979,13.7,0.4175,0.2388,0.2007,0.1907,0.1134,histogram,-0.1787,
+mp_mouse_1_oct,,,,,,,,,,,,no ap_full result
+short_comparison_test,1195.0,9.0,0.7722,21.1,0.3475,0.2001,0.2196,0.1866,0.1037,histogram,-0.1474,
+still_test,,,,,,,,,,,,no ap_full result

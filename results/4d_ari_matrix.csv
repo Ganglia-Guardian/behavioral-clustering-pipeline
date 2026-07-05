@@ -1,0 +1,5 @@
+method,ari_vs_histogram_ap_full,ari_vs_4d_sliced_w1,ari_vs_4d_exact_emd,ari_vs_4d_sinkhorn
+histogram_ap_full,1.0,0.1858,0.1916,0.2128
+4d_sliced_w1,0.1858,1.0,0.3355,0.2004
+4d_exact_emd,0.1916,0.3355,1.0,0.3155
+4d_sinkhorn,0.2128,0.2004,0.3155,1.0

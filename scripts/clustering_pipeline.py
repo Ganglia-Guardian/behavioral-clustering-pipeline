@@ -87,6 +87,15 @@ ARENA_BIN_EDGES = {
     "2d_wireless": _EDGES_2D,
 }
 
+# Per-channel normalization scales for empirical W1.
+# Chosen to match the histogram's implicit scaling: each channel's W1 contribution
+# is divided by its bin range so all four channels are on the same [0, 1] scale.
+#   y_GA     : bin range [-1.0,  1.0]  → scale 2.0
+#   z        : bin range [-1.5,  1.0]  → scale 2.5
+#   z_gyro   : bin range [-100, 100]   → scale 200.0
+#   log_tot  : single threshold at -3  → scale 3.0
+_EMPIRICAL_SCALES = np.array([2.0, 2.5, 200.0, 3.0], dtype=np.float32)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1 — Load cleaned motion data
@@ -202,6 +211,40 @@ def extract_histogram_features(sensor: dict, bin_edges: list) -> np.ndarray:
     return hist_matrix
 
 
+def extract_empirical_features(sensor: dict) -> np.ndarray:
+    """
+    Empirical-distribution alternative to extract_histogram_features.
+
+    Instead of binning, each window's 60 raw samples per channel are sorted
+    and normalized, giving the exact empirical quantile function (inverse CDF).
+    L1 distance between two such vectors equals the exact 1D Wasserstein-1
+    distance — no binning approximation.
+
+    Returns (N_windows, 240) float32  (4 channels × 60 sorted samples).
+    Each channel is divided by _EMPIRICAL_SCALES so all four contribute on the
+    same [0, 1] scale as the histogram CDF-L1 metric.
+    """
+    print("[3/5] Extracting empirical features (sorted quantiles)...")
+
+    raw_channels = [
+        sensor["y_GA"],
+        sensor["z"],
+        sensor["z_gyro"],
+        np.log(np.maximum(sensor["tot_accel"], 1e-10)),
+    ]
+
+    N_samples = len(raw_channels[0])
+    N_windows = N_samples // WIN_SIZE
+    emp = np.zeros((N_windows, 4 * WIN_SIZE), dtype=np.float32)
+
+    for c, (ch, scale) in enumerate(zip(raw_channels, _EMPIRICAL_SCALES)):
+        win_data = ch[: N_windows * WIN_SIZE].reshape(N_windows, WIN_SIZE)
+        emp[:, c * WIN_SIZE : (c + 1) * WIN_SIZE] = np.sort(win_data, axis=1) / scale
+
+    print(f"      Windows: {N_windows:,}   feature dim: {4 * WIN_SIZE}")
+    return emp
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 4 — Sparse similarity matrix via FAISS ANN
 #          (replaces runDistanceSim.m option 2, the O(N²) EMD double loop)
@@ -209,14 +252,16 @@ def extract_histogram_features(sensor: dict, bin_edges: list) -> np.ndarray:
 
 def build_knn_similarity(hist_matrix: np.ndarray,
                           channel_sizes: list,
-                          K: int = 100) -> np.ndarray:
+                          K: int = 100,
+                          precomputed_features: np.ndarray = None) -> np.ndarray:
     """
     Build a sparse K-NN similarity matrix via FAISS IVFFlat (approximate L1).
     Returns triplets [i, j, sim] compatible with apclusterSparse.
     """
     print(f"[experimental] Building K-NN similarity matrix (FAISS ANN, K={K})...")
 
-    cdf_features = _build_cdf_features(hist_matrix, channel_sizes).astype(np.float32)
+    cdf_features = _build_cdf_features(hist_matrix, channel_sizes,
+                                        precomputed=precomputed_features).astype(np.float32)
     N, d = cdf_features.shape
 
     n_cells = max(int(np.sqrt(N)), 64)
@@ -259,7 +304,8 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
                            damping: float = 0.9,
                            max_iter: int = 1000,
                            convergence_iter: int = 15,
-                           _timing: dict = None) -> np.ndarray:
+                           _timing: dict = None,
+                           precomputed_features: np.ndarray = None) -> np.ndarray:
     """
     AP on a K-NN sparse similarity graph (equivalent to apclusterSparse.m).
     Memory O(NK) vs O(N²) for full AP.
@@ -270,12 +316,13 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
     t0 = time.time()
 
     # Build CDF features early — needed for final assignment step
-    cdf_all = _build_cdf_features(hist_matrix, channel_sizes)
+    cdf_all = _build_cdf_features(hist_matrix, channel_sizes, precomputed=precomputed_features)
 
     # ── Step 1: K-NN sparse similarity ───────────────────────────────────────
     print(f"[4/5] Sparse AP (K-NN)  (N={N:,}, K={K})")
     print(f"      Building K-NN graph (FAISS IVFFlat)...")
-    triplets = build_knn_similarity(hist_matrix, channel_sizes, K=K)
+    triplets = build_knn_similarity(hist_matrix, channel_sizes, K=K,
+                                    precomputed_features=precomputed_features)
     t_dist   = time.time() - t0
     print(f"      K-NN done in {t_dist:.1f}s  ({len(triplets):,} directed edges)")
 
@@ -405,8 +452,16 @@ def cluster_ap_sparse_knn(hist_matrix: np.ndarray,
 # Step 5b — HDBSCAN clustering  (recommended replacement for AP)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_cdf_features(hist_matrix: np.ndarray, channel_sizes: list) -> np.ndarray:
-    """CDF of each channel, divided by (n_bins-1) for equal channel weighting."""
+def _build_cdf_features(hist_matrix: np.ndarray, channel_sizes: list,
+                        precomputed: np.ndarray = None) -> np.ndarray:
+    """CDF of each channel, divided by (n_bins-1) for equal channel weighting.
+
+    If `precomputed` is given (empirical sorted features), it is returned as-is
+    — the sorted quantile vector is already the inverse-CDF representation and
+    needs no further transformation.
+    """
+    if precomputed is not None:
+        return precomputed.astype(np.float64)
     col, cdfs = 0, []
     for size in channel_sizes:
         cdfs.append(np.cumsum(hist_matrix[:, col: col + size], axis=1) / (size - 1))
@@ -1030,6 +1085,7 @@ def run_pipeline(input_csv: str,
                  use_ap_kmeans: bool = False,
                  use_ap_stratified: bool = False,
                  use_coreset: bool = False,
+                 use_empirical: bool = False,
                  ann_k: int = 100,
                  sparse_k: int = 100,
                  preference: float = None,
@@ -1048,15 +1104,22 @@ def run_pipeline(input_csv: str,
     sensor        = process_motion(raw_motion)
     bin_edges     = ARENA_BIN_EDGES[arena]
     channel_sizes = [len(e) - 1 for e in bin_edges]
-    hist_matrix   = extract_histogram_features(sensor, bin_edges)
-    N_windows     = hist_matrix.shape[0]
+
+    if use_empirical:
+        hist_matrix      = extract_empirical_features(sensor)
+        empirical_matrix = hist_matrix          # already the distance features
+    else:
+        hist_matrix      = extract_histogram_features(sensor, bin_edges)
+        empirical_matrix = None
+    N_windows = hist_matrix.shape[0]
 
     if use_ap:
         labels = cluster_ap_full(hist_matrix, channel_sizes,
                                    K=ann_k, preference=preference)
     elif use_ap_sparse:
         labels = cluster_ap_sparse_knn(hist_matrix, channel_sizes,
-                                       K=sparse_k, preference=preference)
+                                       K=sparse_k, preference=preference,
+                                       precomputed_features=empirical_matrix)
     elif use_ap_twolevel:
         labels = cluster_ap_twolevel(hist_matrix, channel_sizes,
                                          preference=preference)
@@ -1078,7 +1141,7 @@ def run_pipeline(input_csv: str,
                                     use_coreset=use_coreset)
 
     print("[5/5] Computing silhouette score...")
-    cdf_feats = _build_cdf_features(hist_matrix, channel_sizes)
+    cdf_feats = _build_cdf_features(hist_matrix, channel_sizes, precomputed=empirical_matrix)
     sil = _silhouette(cdf_feats, labels)
     n_clusters = len(set(labels) - {-1})
     n_noise    = int((labels == -1).sum())

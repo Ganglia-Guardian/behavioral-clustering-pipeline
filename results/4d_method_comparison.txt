@@ -1,0 +1,28 @@
+======================================================================
+4D Wasserstein vs Histogram CDF-L1 — Clustering Comparison
+Dataset: short_comparison_test  (N=1195 windows)
+======================================================================
+
+Method                    K    Mean   Min   Max   Time(s)  Cluster sizes
+----------------------------------------------------------------------
+histogram_ap_full         9   132.8    77   198      0.22  [198, 176, 173, 170, 108, 106, 103, 84, 77]
+4d_sliced_w1              4   298.8   134   490      1.40  [490, 433, 138, 134]
+4d_exact_emd              4   298.8   144   581    216.10  [581, 298, 172, 144]
+4d_sinkhorn               6   199.2    64   381    289.90  [381, 230, 201, 166, 153, 64]
+
+ARI Matrix (Adjusted Rand Index between method pairs)
+----------------------------------------------------------------------
+                        histogram_ap  4d_sliced_w1  4d_exact_emd   4d_sinkhorn
+histogram_ap_full             1.0000        0.1858        0.1916        0.2128
+4d_sliced_w1                  0.1858        1.0000        0.3355        0.2004
+4d_exact_emd                  0.1916        0.3355        1.0000        0.3155
+4d_sinkhorn                   0.2128        0.2004        0.3155        1.0000
+
+Notes
+----------------------------------------------------------------------
+- histogram_ap_full : 1D marginal W1 via CDF-L1 (30-dim), current method
+- 4d_sliced_w1      : Sliced W1, L=100 random projections in R^4
+- 4d_exact_emd      : Exact W1 via linear programming (POT emd2), 60x60
+- 4d_sinkhorn       : Sinkhorn regularized OT, reg=0.5, 60x60
+- All methods use AP full with affinity = -(dist^2), pref = min(affinity)
+- ARI=1: identical clusterings, ARI=0: random agreement
