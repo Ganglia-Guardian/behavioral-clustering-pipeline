@@ -98,7 +98,8 @@ DATASETS = [
 ]
 
 AP_SAMPLE_SIZE = 10_000
-AP_FULL_MAX_N = 20_000   # ~3×N²×8 bytes needed for AP internals at this N
+AP_FULL_MAX_N = 25_000   # ~4×N²×8 bytes needed for AP internals (~18 GB at N=25,000;
+                         # bumped from 20,000 now that we're running on a 48 GB machine)
 AP_SPARSE_K = 1_000
 
 
@@ -159,7 +160,31 @@ def load_data(cfg: dict, out_dir: Path) -> tuple:
     return hist, ts, folders, cdf, channel_sizes
 
 
-def load_cached(out_path: Path, cdf: np.ndarray, N: int) -> dict | None:
+def load_historical_timing(csv_path: Path) -> dict:
+    """Read a previous method_comparison.csv (if any) into {(dataset, method):
+    (t_dist_s, t_algo_s, t_s)}, so load_cached() can preserve real timing for
+    methods that get loaded from cache instead of re-run. Without this,
+    load_cached() would blank out timing that was already correctly measured
+    in an earlier run -- e.g. running `--force ap_full` alone previously wiped
+    every other method's timing back to NaN, even though nothing about those
+    methods' results had changed."""
+    if not csv_path.exists():
+        return {}
+    try:
+        df = pd.read_csv(csv_path)
+        out = {}
+        for _, row in df.iterrows():
+            key = (row["dataset"], row["method"])
+            t_dist, t_algo, t_s = row.get("t_dist_s"), row.get("t_algo_s"), row.get("t_s")
+            if pd.notna(t_s):
+                out[key] = (t_dist, t_algo, t_s)
+        return out
+    except Exception:
+        return {}
+
+
+def load_cached(out_path: Path, cdf: np.ndarray, N: int, dataset: str = None,
+                 method: str = None, historical: dict = None) -> dict | None:
     """Read existing result CSV and recompute metrics. Returns None if unreadable."""
     try:
         df = pd.read_csv(out_path)
@@ -169,6 +194,13 @@ def load_cached(out_path: Path, cdf: np.ndarray, N: int) -> dict | None:
         labels = np.where(cluster_idx == 0, -1, cluster_idx - 1)
         stats = cluster_stats(labels)
         sil = _silhouette(cdf, labels)
+
+        t_dist = t_algo = t_s = float("nan")
+        if historical and dataset is not None and method is not None:
+            hist = historical.get((dataset, method))
+            if hist is not None:
+                t_dist, t_algo, t_s = hist
+
         return {
             "status": "ok",
             "n_windows": N,
@@ -180,9 +212,9 @@ def load_cached(out_path: Path, cdf: np.ndarray, N: int) -> dict | None:
             "std": round(stats["std"], 1),
             "min": stats["min"],
             "max": stats["max"],
-            "t_dist": float("nan"),
-            "t_algo": float("nan"),
-            "t_s": float("nan"),
+            "t_dist": t_dist,
+            "t_algo": t_algo,
+            "t_s": t_s,
             "preference": None,
             "labels": labels,
             "cached": True,
@@ -391,6 +423,11 @@ def main():
     else:
         force_methods = set(args.force)
 
+    # Read *before* it gets overwritten at the end of this run, so cached
+    # (non-forced) methods can keep their real measured timing instead of
+    # load_cached() blanking it to NaN.
+    historical_timing = load_historical_timing(RESULTS_DIR / "method_comparison.csv")
+
     print("=" * 62)
     print("  Method Comparison: HDBSCAN | AP full | AP sampled | AP sparse")
     print("=" * 62)
@@ -447,7 +484,8 @@ def main():
             )
 
             if use_cache:
-                cached = load_cached(out_csv, cdf, N)
+                cached = load_cached(out_csv, cdf, N, dataset=cfg["name"],
+                                     method=method, historical=historical_timing)
                 if cached is not None:
                     cached["method"]  = method
                     cached["dataset"] = cfg["name"]

@@ -1,0 +1,8 @@
+dataset,K_full,K_sampled,K_matched,occupancy_r,occupancy_ci_lo,occupancy_ci_hi,transition_r,transition_ci_lo,transition_ci_hi,raster_agreement,exemplar_mean_dist,exemplar_median_dist,exemplar_frac_identical
+short_comparison_test,9,9,9,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.0,0.0,1.0
+comparison_test,33,28,28,0.9114,0.8025,0.9687,0.9296,0.8852,0.9569,0.5989,0.0928,0.085,0.3333
+control_mouse_1_jul,42,25,25,0.7637,0.5437,0.899,0.9308,0.8916,0.9549,0.4154,0.1213,0.13,0.0952
+control_mouse_1_oct,45,28,28,0.956,0.921,0.9803,0.9752,0.9617,0.9842,0.5082,0.0938,0.085,0.0889
+mp_mouse_1_jul,40,26,26,0.927,0.8715,0.97,0.965,0.9435,0.9773,0.5457,0.0999,0.09,0.1
+mp_mouse_1_oct,50,30,30,0.9186,0.7695,0.9655,0.9551,0.9341,0.9679,0.5047,0.1262,0.1142,0.02
+still_test,46,27,27,0.8033,0.5034,0.9232,0.9232,0.8902,0.9456,0.5341,0.0967,0.1017,0.0217

@@ -14,6 +14,7 @@
 \usepackage{graphicx}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{placeins}
 
 \hypersetup{
     colorlinks=true,
@@ -28,13 +29,13 @@
 
 \title{\textbf{A Scalable Python Pipeline for IMU-Based Behavioral Clustering}}
 \author{Chuqi Wang}
-\date{June 17, 2026}
+\date{June 17, 2026 \\ \normalsize revised August 24, 2026}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-This report describes a Python reimplementation of the MATLAB behavioral clustering pipeline. The core representation is preserved: 300\,ms IMU windows are encoded as channel-wise histograms, converted to CDFs, and compared via CDF-L1 distance (equivalent to 1D Wasserstein/EMD). The main addition is a set of scalable Affinity Propagation variants---random-sampled, coreset, k-means, stratified, sparse, and two-level---that avoid the $O(N^2)$ memory cost of full AP while staying close to its output. All methods are evaluated on eight datasets using silhouette score and ARI against full AP. Random-sampled AP is currently the best practical default; k-means and stratified sampling are promising alternatives for datasets where rare behaviors matter.
+This report describes a Python reimplementation of the MATLAB behavioral clustering pipeline. The core representation is preserved: 300\,ms IMU windows are encoded as channel-wise histograms, converted to CDFs, and compared via CDF-L1 distance (equivalent to 1D Wasserstein/EMD). The main addition is a set of scalable Affinity Propagation variants---random-sampled, coreset, k-means, stratified, sparse, and two-level---that avoid the $O(N^2)$ memory cost of full AP while staying close to its output. All methods are evaluated on eight datasets using silhouette score and ARI against full AP; full AP is now computed on seven of the eight datasets (raised from three), from a single dependency-version-pinned run. Beyond cluster-level agreement, random-sampled AP is validated against full AP on population-level behavioral summaries---occupancy and transition-matrix correlation---with an honest look at where it does \emph{not} agree: frame-level and single-exemplar identity. Random-sampled AP is currently the best practical default; k-means and stratified sampling are promising alternatives for datasets where rare behaviors matter.
 \end{abstract}
 
 \section{Project Goal}
@@ -50,6 +51,7 @@ The original MATLAB pipeline performs Affinity Propagation clustering using an E
 \label{fig:pipeline-overview}
 \end{figure}
 
+\FloatBarrier
 \section{Data Overview}
 
 \subsection{Raw Harp Motion Data}
@@ -86,6 +88,7 @@ If $\Delta c > 1$, then $\Delta c - 1$ motion packets were dropped. The preproce
 
 The cleaning rule is window-based. Since one behavioral window contains 60 samples, corresponding to 300 ms at 200 Hz, the script checks missingness inside each 60-row block. If more than 10\% of samples in a window contain NaNs in the sensor columns, the entire window is discarded. Remaining NaNs are linearly interpolated. The cleaned motion data are finally trimmed to a multiple of 60 samples.
 
+\FloatBarrier
 \section{Signal Processing}
 
 After loading the cleaned motion rows, \texttt{clustering\_pipeline.py} applies signal processing designed to mirror the MATLAB pipeline.
@@ -114,6 +117,7 @@ The pipeline applies a clipped-boundary median filter with kernel size 7. It the
 
 The fourth histogram channel uses $\log(a_{\mathrm{tot}})$, with a small numerical floor to avoid $\log(0)$.
 
+\FloatBarrier
 \section{Windowing and Histogram Representation}
 
 \subsection{Behavioral Windows}
@@ -248,6 +252,7 @@ occupied, reflecting varied angular velocity. Each channel sums to~1.}
 \label{fig:stage3}
 \end{figure}
 
+\FloatBarrier
 \section{CDF Transformation and EMD Distance}
 
 \subsection{CDF Representation}
@@ -314,6 +319,7 @@ The Python AP methods follow the same similarity convention, but the preference 
 
 matching the current MATLAB setting \texttt{param = min(s(:,3))} in \texttt{VPAPPAxes.m}, where column~3 of \texttt{s} stores the pairwise similarity values. For random-sampled AP, coreset AP, sparse AP, k-means-sampled AP, and stratified AP, the code estimates the same global minimum similarity by sampling 500,000 random pairs from all $N$ windows. Two-level AP is the main exception: it uses median affinity within local blocks and again among candidate exemplars, because a global minimum preference is too conservative at those smaller local scales.
 
+\FloatBarrier
 \section{Role of FAISS}
 
 FAISS~\cite{johnson2021} is not itself the behavioral clustering algorithm in this pipeline. It is used as a fast nearest-neighbor engine operating on the CDF feature vectors computed in the previous section. In the AP sampled, coreset, k-means sampled, stratified, sparse, and two-level methods, AP finds a smaller set of exemplars. FAISS then answers:
@@ -338,6 +344,7 @@ Thus FAISS accelerates assignment and KNN graph construction; it does not replac
 \label{fig:faiss-usage}
 \end{figure}
 
+\FloatBarrier
 \section{Why the Python Pipeline Is Faster Than the MATLAB-Style Approach}
 
 The speed improvement comes from two separate changes. First, the distance computation is vectorized: each window is represented as a CDF vector, and the EMD-like distance between two windows is computed by a simple L1 distance between CDF vectors. This avoids repeatedly calling a MATLAB/MEX EMD routine inside nested loops.
@@ -351,6 +358,7 @@ Second, the scalable AP variants avoid constructing the full dense $N \times N$ 
 \label{fig:matlab-python-speed}
 \end{figure}
 
+\FloatBarrier
 \section{Affinity Propagation Algorithm}
 \label{sec:ap-algorithm}
 
@@ -480,7 +488,7 @@ Total time & $O(T \cdot N^2)$ \\
 \end{tabular}
 \end{center}
 
-For $N = 20{,}000$ and $T \approx 200$ iterations, full AP requires approximately 12\,GB of memory and several minutes of compute. This is the fundamental bottleneck that motivates all scalable AP variants described in Section~\ref{sec:clustering-methods}.
+For $N = 25{,}000$ and $T \approx 200$ iterations, full AP requires approximately 18\,GB of memory and several minutes of compute. This is the fundamental bottleneck that motivates all scalable AP variants described in Section~\ref{sec:clustering-methods}.
 
 \subsection{Parameter Settings Used in This Pipeline}
 
@@ -509,6 +517,7 @@ AP Two-level (L2)  & 0.9 & 500  & 30 & median among candidate exemplars \\
 
 All variants use $\lambda = 0.9$, which is higher than the scikit-learn default of 0.5. A higher damping value slows convergence but reduces oscillation, which improves stability when running AP on high-dimensional CDF feature vectors.
 
+\FloatBarrier
 \section{Clustering Methods}
 \label{sec:clustering-methods}
 
@@ -529,7 +538,7 @@ Full AP~\cite{frey2007} is the closest Python equivalent to the MATLAB algorithm
     D \in \mathbb{R}^{N \times N},
 \end{equation}
 
-converts it to a similarity matrix $S = -D^2$, fills the diagonal with the AP preference, and runs scikit-learn's~\cite{pedregosa2011} \texttt{AffinityPropagation} with precomputed affinities. The preference is set to the exact minimum of the $N{\times}N$ affinity matrix, matching the MATLAB \texttt{AccelCluster} setting. It is the most faithful reference method, but requires $O(N^2)$ memory and $O(N^2)$ work per AP iteration, so it is skipped for datasets with $N > 20{,}000$ in the batch comparison.
+converts it to a similarity matrix $S = -D^2$, fills the diagonal with the AP preference, and runs scikit-learn's~\cite{pedregosa2011} \texttt{AffinityPropagation} with precomputed affinities. The preference is set to the exact minimum of the $N{\times}N$ affinity matrix, matching the MATLAB \texttt{AccelCluster} setting. It is the most faithful reference method, but requires $O(N^2)$ memory and $O(N^2)$ work per AP iteration, so it is skipped for datasets with $N > 25{,}000$ in the batch comparison.
 
 \subsection{Random-Sampled AP}
 
@@ -606,6 +615,7 @@ The preference uses the same global min estimate as random-sampled AP (500,000 r
 
 HDBSCAN~\cite{campello2013} is included as a density-based reference. It clusters CDF features under L1 distance without needing a preference parameter, and assigns low-density windows a noise label ($-1$) rather than forcing them into a cluster. Reproducing MATLAB AP results is not the goal---HDBSCAN optimises a different objective---but it serves as a useful sanity check and exploratory tool, particularly for identifying whether the recording contains genuinely distinct dense behavioral modes.
 
+\FloatBarrier
 \section{Evaluation Metrics}
 
 \subsection{Number of Clusters and Noise}
@@ -645,6 +655,7 @@ $<0$ & worse than chance \\
 \end{tabular}
 \end{center}
 
+\FloatBarrier
 \section{Datasets}
 
 The current batch comparison evaluates eight datasets.
@@ -668,12 +679,13 @@ Dataset & $N$ & Duration & Description \\
 \end{tabular}
 \end{table}
 
+\FloatBarrier
 \section{Results}
 \label{sec:results}
 
 \subsection{Cluster Counts and Silhouette Scores}
 
-Tables~\ref{tab:cluster-counts} and~\ref{tab:silhouette} summarize the current cached comparison results. Cluster counts and silhouette scores are shown separately for readability. Full AP is skipped when the dataset has more than 20,000 windows. The accompanying figures use abbreviated axis labels from the plotting code (e.g., \textit{AP twolevel}, \textit{AP kmeans}, \textit{AP stratified}), which correspond to the full method names used in the tables and text.
+Tables~\ref{tab:cluster-counts} and~\ref{tab:silhouette} summarize the current cached comparison results, from a single version-pinned run (\texttt{requirements.txt}; numpy 2.5.2, scikit-learn 1.9.0, faiss-cpu 1.15.0) performed on 2026-08-24. Cluster counts and silhouette scores are shown separately for readability. Full AP is skipped when the dataset has more than 25,000 windows (raised from an earlier 20,000-window threshold after moving to a 48\,GB machine; see the reproducibility note at the end of this section). The accompanying figures use abbreviated axis labels from the plotting code (e.g., \textit{AP twolevel}, \textit{AP kmeans}, \textit{AP stratified}), which correspond to the full method names used in the tables and text.
 
 \begin{figure}[h]
 \centering
@@ -693,13 +705,13 @@ Tables~\ref{tab:cluster-counts} and~\ref{tab:silhouette} summarize the current c
 Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
 \midrule
 \texttt{short\_comparison\_test} & 2 & 9 & 9 & 9 & 19 & 11 & 9 & 9 \\
-\texttt{comparison\_test} & 7 & 33 & 30 & 30 & 75 & 33 & 29 & 34 \\
-\texttt{mp\_mouse\_1\_jul} & 82 & 41 & 28 & 32 & 108 & 38 & 27 & 33 \\
-\texttt{control\_mouse\_1\_jul} & 3 & -- & 30 & 34 & 134 & 48 & 29 & 35 \\
-\texttt{control\_mouse\_1\_oct} & 17 & -- & 29 & 32 & 142 & 46 & 28 & 36 \\
-\texttt{mp\_mouse\_1\_oct} & 207 & -- & 30 & 34 & 145 & 33 & 31 & 38 \\
-\texttt{still\_test} & 221 & -- & 29 & 30 & 118 & 36 & 28 & 32 \\
-\texttt{moving\_test} & 473 & -- & 30 & 42 & 222 & 32 & 32 & 42 \\
+\texttt{comparison\_test} & 7 & 33 & 28 & 30 & 75 & 33 & 27 & 32 \\
+\texttt{mp\_mouse\_1\_jul} & 84 & 40 & 26 & 32 & 108 & 38 & 29 & 33 \\
+\texttt{control\_mouse\_1\_jul} & 3 & 42 & 25 & 34 & 134 & 48 & 27 & 33 \\
+\texttt{control\_mouse\_1\_oct} & 17 & 45 & 28 & 32 & 142 & 46 & 29 & 37 \\
+\texttt{mp\_mouse\_1\_oct} & 206 & 50 & 30 & 34 & 145 & 33 & 32 & 37 \\
+\texttt{still\_test} & 217 & 46 & 27 & 30 & 118 & 36 & 29 & 32 \\
+\texttt{moving\_test} & 467 & -- & 30 & 42 & 222 & 32 & 34 & 43 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -722,20 +734,20 @@ Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox
 Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
 \midrule
 \texttt{short\_comparison\_test} & \textbf{0.302} & 0.152 & 0.152 & 0.152 & 0.133 & 0.160 & 0.152 & 0.152 \\
-\texttt{comparison\_test} & \textbf{0.257} & 0.148 & 0.136 & 0.129 & 0.117 & 0.149 & 0.138 & 0.151 \\
-\texttt{mp\_mouse\_1\_jul} & 0.071 & 0.193 & 0.179 & \textbf{0.225} & 0.153 & 0.197 & 0.218 & 0.204 \\
-\texttt{control\_mouse\_1\_jul} & \textbf{0.408} & -- & 0.139 & 0.135 & 0.085 & 0.128 & 0.131 & 0.151 \\
-\texttt{control\_mouse\_1\_oct} & 0.121 & -- & 0.138 & \textbf{0.155} & 0.059 & 0.130 & 0.145 & 0.130 \\
-\texttt{mp\_mouse\_1\_oct} & \textbf{0.359} & -- & 0.217 & 0.207 & 0.135 & 0.209 & 0.212 & 0.221 \\
-\texttt{still\_test} & \textbf{0.317} & -- & 0.192 & 0.186 & 0.179 & 0.168 & 0.186 & 0.190 \\
-\texttt{moving\_test} & \textbf{0.580} & -- & 0.279 & 0.313 & 0.203 & 0.235 & 0.265 & 0.261 \\
+\texttt{comparison\_test} & \textbf{0.277} & 0.148 & 0.136 & 0.129 & 0.117 & 0.149 & 0.143 & 0.144 \\
+\texttt{mp\_mouse\_1\_jul} & 0.057 & 0.196 & 0.194 & \textbf{0.225} & 0.153 & 0.197 & 0.227 & 0.199 \\
+\texttt{control\_mouse\_1\_jul} & \textbf{0.408} & 0.132 & 0.136 & 0.135 & 0.085 & 0.128 & 0.136 & 0.144 \\
+\texttt{control\_mouse\_1\_oct} & 0.108 & 0.122 & 0.145 & \textbf{0.155} & 0.059 & 0.130 & 0.139 & 0.134 \\
+\texttt{mp\_mouse\_1\_oct} & \textbf{0.353} & 0.213 & 0.217 & 0.207 & 0.135 & 0.209 & 0.231 & 0.232 \\
+\texttt{still\_test} & \textbf{0.300} & 0.208 & 0.190 & 0.186 & 0.179 & 0.168 & 0.194 & 0.190 \\
+\texttt{moving\_test} & \textbf{0.574} & -- & 0.279 & 0.313 & 0.203 & 0.235 & 0.264 & 0.239 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Agreement with Full AP}
 
-Full AP is available for three datasets. Table~\ref{tab:ari} reports ARI against full AP. The strongest agreement is usually achieved by sampled AP variants, especially random, k-means, and stratified sampling. The same column abbreviations are used as above.
+Full AP is now available for seven of the eight datasets (up from three in the previous version of this report), after raising the full-AP size threshold from 20,000 to 25,000 windows -- see the reproducibility note at the end of this section. Only \texttt{moving\_test} ($N=47{,}028$) still exceeds the threshold. Table~\ref{tab:ari} reports ARI against full AP. The strongest agreement is usually achieved by sampled AP variants, especially random, k-means, and stratified sampling. The same column abbreviations are used as above.
 
 \begin{table}[h]
 \centering
@@ -748,11 +760,17 @@ Full AP is available for three datasets. Table~\ref{tab:ari} reports ARI against
 Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
 \midrule
 \texttt{short\_comparison\_test} & 0.001 & \textbf{1.000} & \textbf{1.000} & 0.395 & 0.548 & \textbf{1.000} & \textbf{1.000} \\
-\texttt{comparison\_test} & 0.004 & 0.425 & 0.403 & 0.351 & 0.348 & \textbf{0.458} & 0.444 \\
-\texttt{mp\_mouse\_1\_jul} & 0.074 & \textbf{0.475} & 0.423 & 0.389 & 0.437 & 0.459 & 0.462 \\
+\texttt{comparison\_test} & 0.004 & \textbf{0.472} & 0.403 & 0.350 & 0.347 & 0.461 & 0.365 \\
+\texttt{mp\_mouse\_1\_jul} & 0.087 & 0.438 & 0.432 & 0.378 & 0.439 & \textbf{0.474} & 0.455 \\
+\texttt{control\_mouse\_1\_jul} & 0.000 & 0.325 & 0.346 & 0.288 & 0.340 & \textbf{0.407} & 0.384 \\
+\texttt{control\_mouse\_1\_oct} & 0.006 & 0.387 & 0.330 & 0.272 & 0.331 & 0.343 & \textbf{0.392} \\
+\texttt{mp\_mouse\_1\_oct} & 0.225 & 0.446 & 0.457 & 0.364 & 0.384 & 0.466 & \textbf{0.486} \\
+\texttt{still\_test} & 0.267 & \textbf{0.450} & 0.349 & 0.377 & 0.430 & 0.453 & 0.402 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+With full AP now computed on four additional datasets, the picture from the original three-dataset comparison holds: no single sampled variant dominates, but random, k-means, and stratified sampling consistently land in the 0.33--0.49 ARI range while HDBSCAN and sparse AP trail behind (HDBSCAN in particular collapses to near-zero agreement on \texttt{control\_mouse\_1\_jul} and \texttt{comparison\_test}, where it finds only 3--7 clusters against full AP's 33--42).
 
 \begin{figure}[h]
 \centering
@@ -763,57 +781,99 @@ Dataset & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Sampled\,} & \rotate
 
 \subsection{Runtime}
 
-Table~\ref{tab:timing} reports wall-clock runtime on a single CPU core. AP Full is the slowest method and becomes impractical beyond $N \approx 20{,}000$. Among scalable methods, HDBSCAN and AP Two-level are the fastest; AP Sampled and AP Coreset are moderate; AP Sparse is the slowest due to the large approximate KNN graph construction step. Timing data for AP K-Means and AP Stratified was not recorded in the current batch run and is omitted from the table.
+Table~\ref{tab:timing} reports wall-clock runtime on a single CPU core, measured directly for every method on every dataset in one version-pinned batch run (no timings are estimated or extrapolated). AP Full is the slowest method by a wide margin -- 150--220\,s on the six datasets between 13,799 and 23,906 windows -- and is not run at all above the 25,000-window threshold. Among scalable methods, HDBSCAN is fastest, followed by AP Two-level and AP Coreset; AP Sampled, AP K-Means, and AP Stratified are moderate (15--50\,s); AP Sparse is consistently the slowest scalable method, exceeding AP Full's own runtime on \texttt{mp\_mouse\_1\_oct} (169\,s) due to its large approximate KNN graph construction step.
 
 \begin{table}[h]
 \centering
-\caption{Wall-clock runtime per dataset and method on a single CPU core. A dash indicates AP Full was skipped. The $\sim$ symbol denotes approximate timing for AP Full, which was not run in the main batch.}
+\caption{Wall-clock runtime per dataset and method on a single CPU core. A dash indicates AP Full was skipped ($N > 25{,}000$).}
 \label{tab:timing}
 \scriptsize
-\setlength{\tabcolsep}{5pt}
-\begin{tabular}{lrcccccc}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrcccccccc}
 \toprule
-Dataset & $N$ & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP Sparse\,} \\
+Dataset & $N$ & \rotatebox{90}{\,HDBSCAN\,} & \rotatebox{90}{\,AP Full\,} & \rotatebox{90}{\,AP Sampled\,} & \rotatebox{90}{\,AP Coreset\,} & \rotatebox{90}{\,AP Two-level\,} & \rotatebox{90}{\,AP Sparse\,} & \rotatebox{90}{\,AP K-Means\,} & \rotatebox{90}{\,AP Stratified\,} \\
 \midrule
-\texttt{short\_comparison\_test} & 1,195 & $<$0.1\,s & 0.6\,s & 0.3\,s & 0.2\,s & 0.2\,s & 0.3\,s \\
-\texttt{comparison\_test} & 13,799 & 2.3\,s & $\sim$135\,s & 30\,s & 25\,s & 17\,s & 16\,s \\
-\texttt{mp\_mouse\_1\_jul} & 19,714 & 1.7\,s & $\sim$390\,s & 33\,s & 29\,s & 26\,s & 61\,s \\
-\texttt{control\_mouse\_1\_jul} & 23,902 & 3.9\,s & -- & 18\,s & 26\,s & 29\,s & 81\,s \\
-\texttt{control\_mouse\_1\_oct} & 23,906 & 2.8\,s & -- & 20\,s & 25\,s & 35\,s & 113\,s \\
-\texttt{mp\_mouse\_1\_oct} & 23,866 & 1.7\,s & -- & 34\,s & 26\,s & 28\,s & 190\,s \\
-\texttt{still\_test} & 23,877 & 1.7\,s & -- & 24\,s & 31\,s & 26\,s & 54\,s \\
-\texttt{moving\_test} & 47,028 & 5.7\,s & -- & 51\,s & 35\,s & 71\,s & 172\,s \\
+\texttt{short\_comparison\_test} & 1,195 & $<$0.1\,s & 0.2\,s & 0.2\,s & 0.2\,s & 0.1\,s & 0.3\,s & 0.2\,s & 0.2\,s \\
+\texttt{comparison\_test} & 13,799 & 1.9\,s & 55.1\,s & 17.8\,s & 22.6\,s & 16.1\,s & 14.6\,s & 32.1\,s & 27.5\,s \\
+\texttt{mp\_mouse\_1\_jul} & 19,714 & 2.4\,s & 150.9\,s & 34.5\,s & 27.2\,s & 23.6\,s & 53.7\,s & 47.6\,s & 35.2\,s \\
+\texttt{control\_mouse\_1\_jul} & 23,902 & 3.4\,s & 196.3\,s & 21.5\,s & 24.4\,s & 26.4\,s & 73.0\,s & 34.3\,s & 23.2\,s \\
+\texttt{control\_mouse\_1\_oct} & 23,906 & 3.3\,s & 218.8\,s & 24.4\,s & 22.8\,s & 32.4\,s & 99.1\,s & 32.2\,s & 16.3\,s \\
+\texttt{mp\_mouse\_1\_oct} & 23,866 & 2.4\,s & 214.2\,s & 51.6\,s & 23.5\,s & 25.7\,s & 168.6\,s & 48.8\,s & 26.3\,s \\
+\texttt{still\_test} & 23,877 & 2.2\,s & 177.2\,s & 19.5\,s & 26.3\,s & 24.2\,s & 46.4\,s & 48.6\,s & 21.0\,s \\
+\texttt{moving\_test} & 47,028 & 5.7\,s & -- & 46.9\,s & 31.7\,s & 65.3\,s & 153.7\,s & 31.3\,s & 33.8\,s \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\subsection{Downstream Behavioral Agreement}
+\label{sec:downstream-agreement}
+
+ARI alone measures whether two labelings group the same windows together; it does not guarantee that behavioral summaries computed from those labels agree. Because AP full and AP sampled are independent runs, their cluster IDs are not directly comparable, so clusters are first matched via Hungarian assignment on their window-overlap contingency table (maximizing total overlap) before any of the metrics below are computed. For the seven datasets with a full-AP reference, Table~\ref{tab:downstream} reports four such metrics between AP sampled and AP full: the Pearson correlation of per-cluster occupancy (fraction of time in each behavior) and of the flattened first-order transition matrix, both with bootstrap 95\% confidence intervals (1,000 resamples over matched cluster pairs); frame-level raster agreement (the fraction of windows where AP sampled's label, translated through the cluster matching, equals AP full's label at that same window); and the fraction of AP-full exemplars whose nearest AP-sampled exemplar is the identical window.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/fig5_downstream.png}
+\caption{Random-sampled AP as a scalable replacement for full AP, summarized across the results of Sections~\ref{sec:results}--\ref{sec:downstream-agreement}. (A) Workflow: full AP builds a dense $N \times N$ affinity matrix and runs message passing over all $N$ windows; AP sampled runs the same message passing on a fixed-size sample of $M = 10{,}000$ windows and assigns every window to its nearest exemplar via FAISS. (B) The resulting complexity gap: full AP is $O(N^2)$; AP sampled is $O(M^2 + N \cdot K)$, effectively flat past $N \approx 10{,}000$. (C) ARI between AP sampled and AP full (Table~\ref{tab:ari}). (D) Cluster counts found by each method (Tables~\ref{tab:cluster-counts}, \ref{tab:ari}). (E) Wall-clock runtime, log scale (Table~\ref{tab:timing}). (F) Downstream behavioral agreement (Table~\ref{tab:downstream}): occupancy and transition-matrix correlation (error bars are the 95\% bootstrap CI) stay near 0.9--1.0, while frame-level raster agreement is substantially lower, showing that AP sampled preserves population-level statistics without reproducing full AP's frame-by-frame labeling.}
+\label{fig:downstream-summary}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Downstream agreement between AP sampled and AP full. $K$ full/sampled/matched are the cluster counts from each method and the number of matched pairs found by Hungarian assignment. Occupancy and transition columns show the point estimate with the 95\% bootstrap CI in brackets.}
+\label{tab:downstream}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\toprule
+Dataset & $K$ (full/sampled/matched) & Occupancy $r$ & Transition $r$ & Raster agree. & Exemplar match \\
+\midrule
+\texttt{short\_comparison\_test} & 9 / 9 / 9 & 1.000 [1.00, 1.00] & 1.000 [1.00, 1.00] & 100.0\% & 100.0\% \\
+\texttt{comparison\_test} & 33 / 28 / 28 & 0.911 [0.80, 0.97] & 0.930 [0.89, 0.96] & 59.9\% & 33.3\% \\
+\texttt{control\_mouse\_1\_jul} & 42 / 25 / 25 & 0.764 [0.54, 0.90] & 0.931 [0.89, 0.95] & 41.5\% & 9.5\% \\
+\texttt{control\_mouse\_1\_oct} & 45 / 28 / 28 & 0.956 [0.92, 0.98] & 0.975 [0.96, 0.98] & 50.8\% & 8.9\% \\
+\texttt{mp\_mouse\_1\_jul} & 40 / 26 / 26 & 0.927 [0.87, 0.97] & 0.965 [0.94, 0.98] & 54.6\% & 10.0\% \\
+\texttt{mp\_mouse\_1\_oct} & 50 / 30 / 30 & 0.919 [0.77, 0.97] & 0.955 [0.93, 0.97] & 50.5\% & 2.0\% \\
+\texttt{still\_test} & 46 / 27 / 27 & 0.803 [0.50, 0.92] & 0.923 [0.89, 0.95] & 53.4\% & 2.2\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Occupancy and transition-matrix correlation both sit around 0.9--1.0 on every dataset except the trivially small \texttt{short\_comparison\_test} case: AP sampled reproduces AP full's \emph{population-level} behavioral statistics almost exactly, which is the evidence that most directly supports using AP sampled as the default scalable method. Frame-level raster agreement and exemplar identity tell a different story -- raster agreement sits near 50\% and exemplar identity is as low as 2--10\% on most datasets -- meaning the two methods frequently assign \emph{individual windows} to different specific clusters, or select different representative windows as exemplars, even while the aggregate statistics that matter for behavioral comparison converge. AP sampled should therefore be trusted for population-level summaries (occupancy, transition structure) but not for frame-level or single-instance cluster identity.
+
+\textit{Caveat on this table:} three of the seven datasets here (\texttt{control\_mouse\_1\_jul/oct}, \texttt{mp\_mouse\_1\_oct}) are drawn from the MitoPark disease-progression cohort. If this analysis is folded into a manuscript that also makes disease-progression claims, replacing these with open-field-only recordings avoids diluting the biological novelty of a future MitoPark-focused paper.
+
 \subsection{Main Observations}
 
-Random-sampled AP is currently the most reliable replacement for full AP: it runs in under a minute on all tested datasets and achieves ARI $\geq 0.425$ on the three datasets where full AP is available. K-means and stratified sampling often match or slightly exceed random sampling in ARI---on \texttt{comparison\_test}, k-means reaches 0.458 versus 0.425 for random---so they are worth considering when sample composition matters.
+Random-sampled AP remains the most reliable general-purpose replacement for full AP: it runs in under a minute on every tested dataset (17--52\,s across the six non-trivial datasets) and achieves ARI between 0.325 and 0.472 on the seven datasets where full AP is now available (up from three datasets in the previous version of this report; Section~\ref{sec:downstream-agreement} additionally shows it reproduces full AP's occupancy and transition-matrix statistics with $r \approx 0.9$--$1.0$). No single sampled variant dominates every dataset, though: k-means and stratified sampling each exceed random sampling's ARI on several datasets---stratified reaches 0.486 versus 0.446 for random on \texttt{mp\_mouse\_1\_oct}, and k-means reaches 0.407 versus 0.325 for random on \texttt{control\_mouse\_1\_jul}---so they are worth considering when sample composition matters.
 
 Coreset sampling shows a different trade-off: it tends to improve silhouette (notably on \texttt{mp\_mouse\_1\_jul} and \texttt{moving\_test}) but does not always improve ARI. The greedy farthest-point selection covers the feature space more uniformly, which helps geometric separation but does not necessarily match the exemplars that full AP would choose.
 
-Sparse AP consistently over-fragments. The cluster counts are 3--5$\times$ higher than full AP across nearly all datasets, and this is not easily fixed by tuning---it is a consequence of the graph structure (Section~\ref{sec:clustering-methods}). It is retained for completeness but is not recommended for production use.
+Sparse AP consistently over-fragments. With full AP now computed on seven datasets, the cluster-count ratio is consistently 2--3$\times$ higher than full AP (from 2.1$\times$ on \texttt{short\_comparison\_test} to 3.2$\times$ on the two \texttt{control\_mouse\_1} sessions), and this is not easily fixed by tuning---it is a consequence of the graph structure (Section~\ref{sec:clustering-methods}). It is also the slowest scalable method on five of the eight datasets. It is retained for completeness but is not recommended for production use.
 
-HDBSCAN occasionally achieves higher silhouette than any AP variant (e.g.\ \texttt{moving\_test}: 0.580), but its ARI against full AP is essentially zero, and it assigns 50--65\% of windows as noise on high-activity datasets. It reflects a genuinely different objective and should be treated as a separate exploratory tool rather than a drop-in replacement.
+HDBSCAN occasionally achieves higher silhouette than any AP variant (e.g.\ \texttt{moving\_test}: 0.574), but its ARI against full AP is essentially zero on most datasets (including exactly 0.000 on \texttt{control\_mouse\_1\_jul}), and it assigns 54--66\% of windows as noise on high-activity datasets. It reflects a genuinely different objective and should be treated as a separate exploratory tool rather than a drop-in replacement.
 
+\FloatBarrier
 \section{Discussion}
 
 \subsection{Recommended Current Method}
 
-Random-sampled AP is the current recommended default for replacing the MATLAB pipeline. It runs in 18--51\,s on all tested datasets and stays close to full AP where comparison is possible. For applications where rare behavioral motifs---tremor, impaired gait---are scientifically important, stratified or coreset sampling is preferable: both ensure that small behavioral clusters are represented in the AP sample regardless of how infrequently they occur. K-means sampling is a reasonable middle ground that selects cluster-central rather than boundary points and showed the best ARI on \texttt{comparison\_test}.
+Random-sampled AP is the current recommended default for replacing the MATLAB pipeline. It runs in 17--52\,s on all tested datasets, stays close to full AP where comparison is possible, and reproduces full AP's population-level occupancy and transition statistics with $r \approx 0.9$--$1.0$ (Section~\ref{sec:downstream-agreement}). For applications where rare behavioral motifs---tremor, impaired gait---are scientifically important, stratified or coreset sampling is preferable: both ensure that small behavioral clusters are represented in the AP sample regardless of how infrequently they occur. K-means sampling is a reasonable middle ground that selects cluster-central rather than boundary points and showed the best ARI on \texttt{mp\_mouse\_1\_jul} and \texttt{control\_mouse\_1\_jul}.
 
-Full AP remains the ground-truth reference and should be run whenever $N$ is small enough (under $\sim$20,000 windows on a machine with 12+ GB RAM).
+Full AP remains the ground-truth reference and should be run whenever $N$ is small enough (under $\sim$25,000 windows on a machine with 18+ GB RAM; this threshold was raised from 20,000/12\,GB after moving to a 48\,GB machine, and is set conservatively below the point where full AP's four simultaneous $N \times N$ matrices would exceed available memory).
 
 \subsection{Limitations}
+\label{sec:limitations}
 
 The histogram representation throws away temporal structure within each 300\,ms window. Two windows with the same amplitude distribution but different within-window dynamics look identical to the pipeline---this is likely fine for coarse locomotor categories but could miss rhythmic features like tremor. The fixed MATLAB-derived bin edges are another constraint: they were calibrated for specific arena and sensor configurations, and may not be optimal for MitoPark mice where disease alters the distribution of accelerations.
 
-A less obvious limitation is that silhouette score rewards geometric compactness, which is not the same as biological meaningfulness. HDBSCAN's high silhouette on some datasets reflects the fact that it discards ambiguous windows as noise, not that its clusters are more biologically valid. Downstream validation---e.g.\ comparing cluster usage between control and MitoPark mice across weeks---is the real test that silhouette cannot replace.
+A less obvious limitation is that silhouette score rewards geometric compactness, which is not the same as biological meaningfulness. HDBSCAN's high silhouette on some datasets reflects the fact that it discards ambiguous windows as noise, not that its clusters are more biologically valid. Downstream validation---e.g.\ comparing cluster usage between control and MitoPark mice across weeks---is the real test that silhouette cannot replace; Section~\ref{sec:downstream-agreement} is a first step in that direction, though it validates AP sampled against AP full rather than against ground-truth behavioral labels.
 
+A reproducibility limitation surfaced directly while preparing this version of the report: re-running AP full on \texttt{mp\_mouse\_1\_jul} in a freshly installed environment (rather than the environment that originally produced the cached results) changed the cluster count from 41 to 40, even though AP full has no randomness beyond a fixed \texttt{random\_state}. This is almost certainly scikit-learn version drift, since the previous \texttt{requirements.txt} did not pin exact package versions. All results in this version of the report come from a single run in an environment with pinned versions (numpy 2.5.2, scipy 1.18.1, pandas 3.0.5, scikit-learn 1.9.0, hdbscan 0.8.44, faiss-cpu 1.15.0), and \texttt{requirements.txt} now records these versions so future re-runs are exactly reproducible. A related issue was found and fixed in \texttt{batch\_compare.py}: AP sampled's preference is only aligned to AP full's exact preference when AP full is freshly computed in the same batch-compare session, so cached or skipped AP-full runs silently left AP sampled using an unaligned, independently estimated preference; this affected the AP-sampled results for four datasets (up to 97\% of window labels differed once corrected) and has been fixed by re-running AP full and AP sampled together for every dataset reported here.
+
+\FloatBarrier
 \section{Conclusion}
 
-The pipeline matches the MATLAB AP output on small datasets ($N \leq 20{,}000$) and extends cleanly to larger recordings through subsampling. Of the scalable variants, random-sampled AP is the most battle-tested; k-means and stratified sampling are newer additions that look competitive and warrant more evaluation as more sessions are processed. The next priority is running timing benchmarks for those two methods and testing all variants on MitoPark longitudinal data, where the biological question---whether cluster usage shifts with disease progression---can be posed directly.
+The pipeline matches the MATLAB AP output on small datasets ($N \leq 25{,}000$, raised from 20,000 in the previous version of this report) and extends cleanly to larger recordings through subsampling. Of the scalable variants, random-sampled AP is the most battle-tested and is now validated not only by ARI but by direct agreement on occupancy and transition statistics (Section~\ref{sec:downstream-agreement}); k-means and stratified sampling remain competitive alternatives, now with full timing data recorded across all eight datasets. The next priorities are: (1) re-verifying MATLAB-vs-Python equivalence under the newly pinned dependency versions, since the environment used to originally generate the MATLAB comparison predates the reproducibility fixes described in Section~\ref{sec:limitations}; (2) resolving whether the MitoPark-derived datasets used in Section~\ref{sec:downstream-agreement} should be replaced with open-field-only recordings if this analysis is folded into a manuscript that also makes disease-progression claims; and (3) an end-to-end run on a long-duration ($\geq$20 hour) recording to demonstrate scalability beyond the current largest dataset (\texttt{moving\_test}, 47,028 windows).
 
 \section*{Implementation Notes}
 
@@ -824,8 +884,12 @@ This document is based on the current local contents of:
     \item \texttt{Python\_Pipeline/scripts/clustering\_pipeline.py}
     \item \texttt{Python\_Pipeline/scripts/batch\_compare.py}
     \item \texttt{Python\_Pipeline/scripts/compare\_results.py}
+    \item \texttt{Python\_Pipeline/scripts/recompute\_ap\_exemplars.py} -- recovers AP exemplar indices (discarded by \texttt{batch\_compare.py}) and produces a self-consistent (AP full, AP sampled) pair per dataset for Section~\ref{sec:downstream-agreement}
+    \item \texttt{Python\_Pipeline/scripts/fig5f\_downstream\_agreement.py} -- computes the cluster matching, occupancy/transition correlation, raster agreement, and exemplar-overlap metrics in Table~\ref{tab:downstream}
+    \item \texttt{Python\_Pipeline/requirements.txt} -- now pins exact package versions (see Section~\ref{sec:limitations})
     \item \texttt{Python\_Pipeline/results/method\_comparison.csv}
     \item \texttt{Python\_Pipeline/results/method\_comparison\_report.txt}
+    \item \texttt{Python\_Pipeline/results/fig5f\_downstream\_agreement.csv}
 \end{itemize}
 
 \begin{thebibliography}{9}

@@ -1,6 +1,6 @@
 =====================================================================================
   Method Comparison Report
-  Generated: 2026-06-22 15:47
+  Generated: 2026-08-24 21:07
 =====================================================================================
   AP preference: min(similarity)  [matches Matlab AccelCluster, min(s(:,3))]
   Silhouette: >0.5 good | 0.25–0.5 reasonable | <0.25 poor
@@ -11,111 +11,111 @@
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       7         7.2%    0.2569      reasonable  0.0042          nan      
-  ap_full       33        0.0%    0.1479      poor        —               nan      
-  ap_sampled    30        0.0%    0.1357      poor        0.4249          30.59    
-  ap_coreset    30        0.0%    0.1291      poor        0.4033          nan      
-  ap_sparse     75        0.0%    0.1168      poor        0.3505          nan      
-  ap_twolevel   33        0.0%    0.1487      poor        0.3475          nan      
-  ap_kmeans     29        0.0%    0.1377      poor        0.4583          nan      
-  ap_stratified 34        0.0%    0.1511      poor        0.4437          nan      
+  hdbscan       7         7.2%    0.2769      reasonable  0.0042          1.89     
+  ap_full       33        0.0%    0.1479      poor        —               55.14    
+  ap_sampled    28        0.0%    0.1360      poor        0.4723          17.8     
+  ap_coreset    30        0.0%    0.1291      poor        0.4033          22.58    
+  ap_sparse     75        0.0%    0.1168      poor        0.3505          14.57    
+  ap_twolevel   33        0.0%    0.1487      poor        0.3475          16.07    
+  ap_kmeans     27        0.0%    0.1429      poor        0.4607          32.06    
+  ap_stratified 32        0.0%    0.1436      poor        0.3648          27.51    
 
 ─────────────────────────────────────────────────────────────────────────────────────
   control_mouse_1_jul  (N = 23,902 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       3         0.8%    0.4084      reasonable  —               nan      
-  ap_full       —         —       —           skipped     —               —        
-  ap_sampled    30        0.0%    0.1394      poor        —               20.13    
-  ap_coreset    34        0.0%    0.1348      poor        —               nan      
-  ap_sparse     134       0.0%    0.0849      poor        —               nan      
-  ap_twolevel   48        0.0%    0.1275      poor        —               nan      
-  ap_kmeans     29        0.0%    0.1305      poor        —               nan      
-  ap_stratified 35        0.0%    0.1509      poor        —               nan      
+  hdbscan       3         0.8%    0.4084      reasonable  0.0001          3.35     
+  ap_full       42        0.0%    0.1319      poor        —               196.33   
+  ap_sampled    25        0.0%    0.1360      poor        0.3252          21.52    
+  ap_coreset    34        0.0%    0.1348      poor        0.3461          24.37    
+  ap_sparse     134       0.0%    0.0849      poor        0.2879          72.99    
+  ap_twolevel   48        0.0%    0.1275      poor        0.3404          26.45    
+  ap_kmeans     27        0.0%    0.1362      poor        0.4070          34.28    
+  ap_stratified 33        0.0%    0.1438      poor        0.3841          23.22    
 
 ─────────────────────────────────────────────────────────────────────────────────────
   control_mouse_1_oct  (N = 23,906 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       17        21.4%   0.1207      poor        —               nan      
-  ap_full       —         —       —           skipped     —               —        
-  ap_sampled    29        0.0%    0.1375      poor        —               20.62    
-  ap_coreset    32        0.0%    0.1553      poor        —               nan      
-  ap_sparse     142       0.0%    0.0594      poor        —               nan      
-  ap_twolevel   46        0.0%    0.1295      poor        —               nan      
-  ap_kmeans     28        0.0%    0.1452      poor        —               nan      
-  ap_stratified 36        0.0%    0.1303      poor        —               nan      
+  hdbscan       17        21.4%   0.1085      poor        0.0059          3.32     
+  ap_full       45        0.0%    0.1221      poor        —               218.76   
+  ap_sampled    28        0.0%    0.1450      poor        0.3870          24.42    
+  ap_coreset    32        0.0%    0.1553      poor        0.3296          22.79    
+  ap_sparse     142       0.0%    0.0594      poor        0.2716          99.14    
+  ap_twolevel   46        0.0%    0.1295      poor        0.3305          32.35    
+  ap_kmeans     29        0.0%    0.1387      poor        0.3428          32.2     
+  ap_stratified 37        0.0%    0.1339      poor        0.3916          16.29    
 
 ─────────────────────────────────────────────────────────────────────────────────────
   moving_test  (N = 47,028 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       473       54.4%   0.5797      good        —               nan      
+  hdbscan       467       54.3%   0.5736      good        —               5.73     
   ap_full       —         —       —           skipped     —               —        
-  ap_sampled    30        0.0%    0.2786      reasonable  —               51.98    
-  ap_coreset    42        0.0%    0.3133      reasonable  —               nan      
-  ap_sparse     222       0.0%    0.2025      poor        —               nan      
-  ap_twolevel   32        0.0%    0.2348      poor        —               nan      
-  ap_kmeans     32        0.0%    0.2645      reasonable  —               nan      
-  ap_stratified 42        0.0%    0.2614      reasonable  —               nan      
+  ap_sampled    30        0.0%    0.2786      reasonable  —               46.92    
+  ap_coreset    42        0.0%    0.3133      reasonable  —               31.69    
+  ap_sparse     222       0.0%    0.2025      poor        —               153.7    
+  ap_twolevel   32        0.0%    0.2348      poor        —               65.3     
+  ap_kmeans     34        0.0%    0.2637      reasonable  —               31.31    
+  ap_stratified 43        0.0%    0.2392      poor        —               33.83    
 
 ─────────────────────────────────────────────────────────────────────────────────────
   mp_mouse_1_jul  (N = 19,714 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       82        59.4%   0.0713      poor        0.0735          nan      
-  ap_full       41        0.0%    0.1934      poor        —               nan      
-  ap_sampled    28        0.0%    0.1790      poor        0.4748          34.36    
-  ap_coreset    32        0.0%    0.2246      poor        0.4234          nan      
-  ap_sparse     108       0.0%    0.1532      poor        0.3890          nan      
-  ap_twolevel   38        0.0%    0.1974      poor        0.4368          nan      
-  ap_kmeans     27        0.0%    0.2176      poor        0.4594          nan      
-  ap_stratified 33        0.0%    0.2040      poor        0.4617          nan      
+  hdbscan       84        59.3%   0.0569      poor        0.0868          2.36     
+  ap_full       40        0.0%    0.1959      poor        —               150.94   
+  ap_sampled    26        0.0%    0.1943      poor        0.4380          34.52    
+  ap_coreset    32        0.0%    0.2246      poor        0.4319          27.18    
+  ap_sparse     108       0.0%    0.1532      poor        0.3781          53.74    
+  ap_twolevel   38        0.0%    0.1974      poor        0.4389          23.58    
+  ap_kmeans     29        0.0%    0.2271      poor        0.4738          47.63    
+  ap_stratified 33        0.0%    0.1994      poor        0.4545          35.19    
 
 ─────────────────────────────────────────────────────────────────────────────────────
   mp_mouse_1_oct  (N = 23,866 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       207       63.2%   0.3594      reasonable  —               nan      
-  ap_full       —         —       —           skipped     —               —        
-  ap_sampled    30        0.0%    0.2174      poor        —               35.92    
-  ap_coreset    34        0.0%    0.2071      poor        —               nan      
-  ap_sparse     145       0.0%    0.1348      poor        —               nan      
-  ap_twolevel   33        0.0%    0.2086      poor        —               nan      
-  ap_kmeans     31        0.0%    0.2121      poor        —               nan      
-  ap_stratified 38        0.0%    0.2206      poor        —               nan      
+  hdbscan       206       63.4%   0.3531      reasonable  0.2250          2.38     
+  ap_full       50        0.0%    0.2135      poor        —               214.19   
+  ap_sampled    30        0.0%    0.2170      poor        0.4455          51.57    
+  ap_coreset    34        0.0%    0.2071      poor        0.4572          23.54    
+  ap_sparse     145       0.0%    0.1348      poor        0.3639          168.6    
+  ap_twolevel   33        0.0%    0.2086      poor        0.3844          25.73    
+  ap_kmeans     32        0.0%    0.2313      poor        0.4664          48.75    
+  ap_stratified 37        0.0%    0.2316      poor        0.4861          26.3     
 
 ─────────────────────────────────────────────────────────────────────────────────────
   short_comparison_test  (N = 1,195 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       2         2.3%    0.3024      reasonable  0.0012          nan      
-  ap_full       9         0.0%    0.1520      poor        —               nan      
-  ap_sampled    9         0.0%    0.1520      poor        1.0000          0.22     
-  ap_coreset    9         0.0%    0.1520      poor        1.0000          nan      
-  ap_sparse     19        0.0%    0.1328      poor        0.3949          nan      
-  ap_twolevel   11        0.0%    0.1599      poor        0.5484          nan      
-  ap_kmeans     9         0.0%    0.1520      poor        1.0000          nan      
-  ap_stratified 9         0.0%    0.1520      poor        1.0000          nan      
+  hdbscan       2         2.3%    0.3024      reasonable  0.0012          0.03     
+  ap_full       9         0.0%    0.1520      poor        —               0.2      
+  ap_sampled    9         0.0%    0.1520      poor        1.0000          0.2      
+  ap_coreset    9         0.0%    0.1520      poor        1.0000          0.2      
+  ap_sparse     19        0.0%    0.1328      poor        0.3949          0.25     
+  ap_twolevel   11        0.0%    0.1599      poor        0.5484          0.1      
+  ap_kmeans     9         0.0%    0.1520      poor        1.0000          0.2      
+  ap_stratified 9         0.0%    0.1520      poor        1.0000          0.2      
 
 ─────────────────────────────────────────────────────────────────────────────────────
   still_test  (N = 23,877 windows)
 ─────────────────────────────────────────────────────────────────────────────────────
   Method        Clusters  Noise%  Silhouette  Quality     ARI vs ap_full  Total(s) 
   ---------------------------------------------------------------------------------
-  hdbscan       221       65.9%   0.3170      reasonable  —               nan      
-  ap_full       —         —       —           skipped     —               —        
-  ap_sampled    29        0.0%    0.1918      poor        —               23.69    
-  ap_coreset    30        0.0%    0.1860      poor        —               nan      
-  ap_sparse     118       0.0%    0.1789      poor        —               nan      
-  ap_twolevel   36        0.0%    0.1684      poor        —               nan      
-  ap_kmeans     28        0.0%    0.1859      poor        —               nan      
-  ap_stratified 32        0.0%    0.1900      poor        —               nan      
+  hdbscan       217       66.0%   0.3003      reasonable  0.2667          2.2      
+  ap_full       46        0.0%    0.2084      poor        —               177.15   
+  ap_sampled    27        0.0%    0.1904      poor        0.4501          19.46    
+  ap_coreset    30        0.0%    0.1860      poor        0.3492          26.3     
+  ap_sparse     118       0.0%    0.1789      poor        0.3769          46.41    
+  ap_twolevel   36        0.0%    0.1684      poor        0.4303          24.2     
+  ap_kmeans     29        0.0%    0.1942      poor        0.4527          48.65    
+  ap_stratified 32        0.0%    0.1902      poor        0.4023          21.04    
 
 =====================================================================================

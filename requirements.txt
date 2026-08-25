@@ -1,8 +1,8 @@
-numpy
-scipy
-pandas
-scikit-learn
-hdbscan
-umap-learn
-faiss-cpu
-h5py
+numpy==2.5.2
+scipy==1.18.1
+pandas==3.0.5
+scikit-learn==1.9.0
+hdbscan==0.8.44
+umap-learn==0.5.12
+faiss-cpu==1.15.0
+h5py==3.16.0

@@ -539,11 +539,15 @@ def cluster_ap_full(hist_matrix: np.ndarray,
                       channel_sizes: list,
                       K: int = 100,
                       preference: float = None,
-                      _timing: dict = None) -> np.ndarray:
+                      _timing: dict = None,
+                      return_exemplars: bool = False):
     """
     Full AP on an N×N CDF-L1 similarity matrix.
     Preference = min(similarity), matching Matlab's min(s(:,3)).
     Skipped automatically for N > 20,000.
+
+    If return_exemplars=True, returns (labels, exemplar_indices) instead of
+    just labels, where exemplar_indices are row indices into hist_matrix.
     """
     from sklearn.cluster import AffinityPropagation
     import scipy.spatial.distance as ssd
@@ -593,6 +597,8 @@ def cluster_ap_full(hist_matrix: np.ndarray,
         _timing['t_dist'] = round(t_dist, 2)
         _timing['t_algo'] = round(t_algo, 2)
         _timing['preference'] = preference
+    if return_exemplars:
+        return labels, ap.cluster_centers_indices_
     return labels
 
 
@@ -701,30 +707,39 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
                        sample_size: int = 10000,
                        preference: float = None,
                        use_coreset: bool = False,
-                       _timing: dict = None) -> np.ndarray:
-    """AP on a random (or coreset) subset of sample_size windows, FAISS assigns the rest."""
+                       _timing: dict = None,
+                       return_exemplars: bool = False,
+                       seed: int = 42):
+    """AP on a random (or coreset) subset of sample_size windows, FAISS assigns the rest.
+
+    If return_exemplars=True, returns (labels, exemplar_indices) instead of
+    just labels, where exemplar_indices are row indices into hist_matrix.
+    `seed` controls which windows are sampled (random draw or coreset's
+    starting point) -- vary it to measure seed-to-seed stability.
+    """
     N = hist_matrix.shape[0]
 
     if N <= sample_size:
         print(f"[4/5] AP sampled: N={N:,} ≤ sample_size={sample_size:,}, running full AP.")
-        return cluster_ap_full(hist_matrix, channel_sizes, preference=preference)
+        return cluster_ap_full(hist_matrix, channel_sizes, preference=preference,
+                               return_exemplars=return_exemplars)
 
     sampling_method = "coreset" if use_coreset else "random"
     print(f"[4/5] AP sampled  (N={N:,}, sample={sample_size:,}, "
-          f"{100*sample_size/N:.0f}% of data, sampling={sampling_method}) ...")
+          f"{100*sample_size/N:.0f}% of data, sampling={sampling_method}, seed={seed}) ...")
 
     cdf_all = _build_cdf_features(hist_matrix, channel_sizes)
 
     if use_coreset:
         print(f"      Running Greedy K-Center coreset (K={sample_size:,}) ...")
         t_coreset = time.time()
-        sample_idx = _coreset_sample(cdf_all.astype(np.float32), sample_size, seed=42)
+        sample_idx = _coreset_sample(cdf_all.astype(np.float32), sample_size, seed=seed)
         t_coreset = time.time() - t_coreset
         print(f"      Coreset done in {t_coreset:.1f}s")
         if _timing is not None:
             _timing['t_coreset'] = round(t_coreset, 2)
     else:
-        rng = np.random.default_rng(42)
+        rng = np.random.default_rng(seed)
         sample_idx = np.sort(rng.choice(N, sample_size, replace=False))
 
     cdf_sample = cdf_all[sample_idx]
@@ -767,6 +782,8 @@ def cluster_ap_sampled(hist_matrix: np.ndarray,
     if _timing is not None:
         _timing['t_dist'] = round(t_dist, 2)
         _timing['t_algo'] = round(t_algo, 2)
+    if return_exemplars:
+        return labels, exemplar_indices
     return labels
 
 
@@ -778,7 +795,8 @@ def cluster_ap_kmeans_sampled(hist_matrix: np.ndarray,
                               channel_sizes: list,
                               sample_size: int = 10000,
                               preference: float = None,
-                              _timing: dict = None) -> np.ndarray:
+                              _timing: dict = None,
+                              seed: int = 42) -> np.ndarray:
     """AP on Mini-batch K-means centroids (mapped to nearest real windows)."""
     N = hist_matrix.shape[0]
 
@@ -787,12 +805,12 @@ def cluster_ap_kmeans_sampled(hist_matrix: np.ndarray,
         return cluster_ap_full(hist_matrix, channel_sizes, preference=preference)
 
     print(f"[4/5] AP kmeans-sampled  (N={N:,}, sample={sample_size:,}, "
-          f"{100*sample_size/N:.0f}% of data) ...")
+          f"{100*sample_size/N:.0f}% of data, seed={seed}) ...")
 
     cdf_all = _build_cdf_features(hist_matrix, channel_sizes)
 
     t0_samp = time.time()
-    sample_idx = _kmeans_sample(cdf_all.astype(np.float32), sample_size, seed=42)
+    sample_idx = _kmeans_sample(cdf_all.astype(np.float32), sample_size, seed=seed)
     t_samp = time.time() - t0_samp
     print(f"      K-means sample: {len(sample_idx):,} points in {t_samp:.1f}s")
     if _timing is not None:
@@ -855,7 +873,8 @@ def cluster_ap_stratified_sampled(hist_matrix: np.ndarray,
                                    sample_size: int = 10000,
                                    n_strata: int = 200,
                                    preference: float = None,
-                                   _timing: dict = None) -> np.ndarray:
+                                   _timing: dict = None,
+                                   seed: int = 42) -> np.ndarray:
     """AP on a stratified sample drawn equally from n_strata coarse K-means groups."""
 
     N = hist_matrix.shape[0]
@@ -865,13 +884,13 @@ def cluster_ap_stratified_sampled(hist_matrix: np.ndarray,
         return cluster_ap_full(hist_matrix, channel_sizes, preference=preference)
 
     print(f"[4/5] AP stratified-sampled  (N={N:,}, sample={sample_size:,}, "
-          f"n_strata={n_strata}) ...")
+          f"n_strata={n_strata}, seed={seed}) ...")
 
     cdf_all = _build_cdf_features(hist_matrix, channel_sizes)
 
     t0_samp = time.time()
     sample_idx = _stratified_sample(cdf_all.astype(np.float32),
-                                    sample_size, n_strata=n_strata, seed=42)
+                                    sample_size, n_strata=n_strata, seed=seed)
     t_samp = time.time() - t0_samp
     if _timing is not None:
         _timing['t_stratified'] = round(t_samp, 2)
